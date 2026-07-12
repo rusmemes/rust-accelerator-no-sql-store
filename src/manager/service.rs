@@ -159,7 +159,7 @@ impl ManagerService {
                     recipient_id: _,
                     heartbeat: Heartbeat { id, ts },
                 } => {
-                    Self::handle_heartbeat(&mut output, state, &id, ts, &self.me);
+                    Self::handle_heartbeat(&mut output, state, id, ts, &self.me);
                 }
                 NodeProtocol::GetClusterState { id } => {
                     Self::handle_get_cluster_state(&mut output, state, id);
@@ -192,7 +192,7 @@ impl ManagerService {
                         &mut output,
                         state,
                         id,
-                        &leader_id,
+                        leader_id,
                         ts,
                         &self.me,
                         &mut self.elections,
@@ -246,7 +246,7 @@ impl ManagerService {
         output: &mut Vec<NodeProtocol>,
         state: &mut State,
         id: NodeId,
-        leader_id: &NodeId,
+        leader_id: NodeId,
         ts: u64,
         me: &Arc<Me>,
         elections: &mut BTreeMap<u64, Election>,
@@ -259,7 +259,7 @@ impl ManagerService {
             },
         )) = elections.last_key_value()
             && *election_ts == ts
-            && leader_id == &me.id
+            && &leader_id == &me.id
         {
             Some((*epoch, id))
         } else {
@@ -416,7 +416,7 @@ impl ManagerService {
     fn handle_heartbeat(
         output: &mut Vec<NodeProtocol>,
         state: &mut State,
-        id: &NodeId,
+        id: NodeId,
         ts: u64,
         me: &Arc<Me>,
     ) {
@@ -427,7 +427,7 @@ impl ManagerService {
                     state
                         .nodes
                         .keys()
-                        .filter(|&key| key != id && key != &me.id)
+                        .filter(|&key| key != &id && key != &me.id)
                         .map(|key| NodeProtocol::Heartbeat {
                             recipient_id: key.clone(),
                             heartbeat: Heartbeat { id: id.clone(), ts },
@@ -616,7 +616,7 @@ mod tests {
         assert!(matches!(
             output.as_slice(),
             [NodeProtocol::NewConnection {
-                id: None,
+                id: _,
                 host,
                 port
             }] if host == "manager.local" && *port == 9000
