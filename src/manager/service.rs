@@ -3,8 +3,11 @@ use crate::manager::domain::{ClusterState, ClusterStateItem, Heartbeat, NodeProt
 use rand::random_range;
 use std::{
     cmp::max,
-    collections::HashMap,
-    collections::{BTreeMap, HashSet},
+    collections::{
+        BTreeMap,
+        HashMap,
+        HashSet
+    },
     sync::Arc,
     time::Duration
 };
