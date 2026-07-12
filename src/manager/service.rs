@@ -1,10 +1,13 @@
 use crate::common::{now_millis, Config, Me, NodeId};
 use crate::manager::domain::{ClusterState, ClusterStateItem, Heartbeat, NodeProtocol};
 use rand::random_range;
-use std::cmp::max;
-use std::collections::{BTreeMap, HashSet};
-use std::time::Duration;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    cmp::max,
+    collections::HashMap,
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+    time::Duration
+};
 use tokio::{
     select,
     sync::mpsc::{Receiver, Sender},

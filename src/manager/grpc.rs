@@ -10,16 +10,14 @@ mod common {
     }
 }
 
-use crate::common::NodeId;
-use crate::manager::domain;
-use crate::manager::grpc::api::v1::ConnectResponse;
 use crate::{
-    common::Me,
+    common::{Me, NodeId},
     manager::{
+        domain,
         domain::NodeProtocol,
         grpc::{
             api::v1::{
-                manager_api_client::ManagerApiClient, manager_api_server::{ManagerApi, ManagerApiServer}, message::Payload, Connect, Heartbeat, Leader,
+                manager_api_client::ManagerApiClient, manager_api_server::{ManagerApi, ManagerApiServer}, message::Payload, Connect, ConnectResponse, Heartbeat, Leader,
                 Message,
                 VoteRequest,
                 VoteResponse,
