@@ -314,7 +314,6 @@ async fn new_connection(
                             let sessions = sessions.clone();
                             let tx = tx.clone();
                             let me = me.clone();
-                            let id = id.clone();
                             tokio::spawn(async move {
                                 input(me, input_stream, &id, host, port, tx.clone()).await;
                                 sessions.write().await.remove(&id);

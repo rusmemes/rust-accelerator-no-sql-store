@@ -132,7 +132,7 @@ impl ManagerService {
                 {
                     if let Some(leader) = state
                         .nodes
-                        .get_mut(&state.elected_leader_id.clone().unwrap())
+                        .get_mut(&state.elected_leader_id.as_ref().unwrap())
                     {
                         if leader.last_heartbeat + 500 < now {
                             state.elected_leader_id = None;
@@ -369,9 +369,11 @@ impl ManagerService {
                 NodeProtocol::Leader { id, epoch, ts } => {
                     if state.epoch < Some(epoch) {
                         self.elections.clear();
-                        state.elected_leader_id = Some(id.clone());
-                        state.epoch = Some(epoch);
-                        state.nodes.get_mut(&id).unwrap().last_heartbeat = ts;
+                        if let Some(leader) = state.nodes.get_mut(&id) {
+                            leader.last_heartbeat = ts;
+                            state.elected_leader_id = Some(id);
+                            state.epoch = Some(epoch);
+                        }
                         tracing::info!("Me: {:?}", self.me);
                         tracing::info!("Leader elected, State: {:?}", state);
                     }
