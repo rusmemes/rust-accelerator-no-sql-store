@@ -153,16 +153,16 @@ impl ManagerService {
         if let Some(state) = self.state.as_mut() {
             match msg {
                 NodeProtocol::NewConnection { id, host, port } => {
-                    Self::handle_new_connection(&mut output, state, id, host, port, &self.me);
+                    handle_new_connection(&mut output, state, id, host, port, &self.me);
                 }
                 NodeProtocol::Heartbeat {
                     recipient_id: _,
                     heartbeat: Heartbeat { id, ts },
                 } => {
-                    Self::handle_heartbeat(&mut output, state, id, ts, &self.me);
+                    handle_heartbeat(&mut output, state, id, ts, &self.me);
                 }
                 NodeProtocol::GetClusterState { id } => {
-                    Self::handle_get_cluster_state(&mut output, state, id);
+                    handle_get_cluster_state(&mut output, state, id);
                 }
                 NodeProtocol::ClusterState {
                     recipient_id: _,
@@ -173,22 +173,15 @@ impl ManagerService {
                             items,
                         },
                 } => {
-                    Self::handle_cluster_state(&mut output, state, epoch, leader_id, items);
+                    handle_cluster_state(&mut output, state, epoch, leader_id, items);
                 }
                 NodeProtocol::VoteRequest { id, epoch, ts } => {
                     tracing::info!("VoteRequest: {:?} {:?}", id, epoch);
-                    Self::handle_vote_request(
-                        &mut output,
-                        state,
-                        id,
-                        epoch,
-                        ts,
-                        &mut self.elections,
-                    );
+                    handle_vote_request(&mut output, state, id, epoch, ts, &mut self.elections);
                 }
                 NodeProtocol::VoteResponse { id, leader_id, ts } => {
                     tracing::info!("VoteResponse: {:?} {:?}", id, leader_id);
-                    Self::handle_vote_response(
+                    handle_vote_response(
                         &mut output,
                         state,
                         id,
@@ -199,277 +192,16 @@ impl ManagerService {
                     );
                 }
                 NodeProtocol::Leader { id, epoch, ts } => {
-                    Self::handle_leader(state, id, epoch, ts, &self.me, &mut self.elections);
+                    handle_leader(state, id, epoch, ts, &self.me, &mut self.elections);
                 }
                 NodeProtocol::NodeDisconnected { id } => {
-                    Self::handle_node_disconnected(state, id, &self.me);
+                    handle_node_disconnected(state, id, &self.me);
                 }
             }
         }
 
         output.extend(self.tick());
         output
-    }
-
-    fn handle_node_disconnected(state: &mut State, id: NodeId, me: &Arc<Me>) {
-        if let Some(_) = state.nodes.remove(&id) {
-            tracing::info!("Node disconnected: {:?}", id);
-            if Some(id) == state.elected_leader_id {
-                state.elected_leader_id = None;
-            }
-            tracing::info!("Me: {:?}", me);
-            tracing::info!("State: {:?}", state);
-        }
-    }
-
-    fn handle_leader(
-        state: &mut State,
-        id: NodeId,
-        epoch: u64,
-        ts: u64,
-        me: &Arc<Me>,
-        elections: &mut BTreeMap<u64, Election>,
-    ) {
-        if state.epoch < Some(epoch) {
-            elections.clear();
-            if let Some(leader) = state.nodes.get_mut(&id) {
-                leader.last_heartbeat = ts;
-                state.elected_leader_id = Some(id);
-                state.epoch = Some(epoch);
-            }
-            tracing::info!("Me: {:?}", me);
-            tracing::info!("Leader elected, State: {:?}", state);
-        }
-    }
-
-    fn handle_vote_response(
-        output: &mut Vec<NodeProtocol>,
-        state: &mut State,
-        id: NodeId,
-        leader_id: NodeId,
-        ts: u64,
-        me: &Arc<Me>,
-        elections: &mut BTreeMap<u64, Election>,
-    ) {
-        let approver = if let Some((
-            epoch,
-            Election::Mine {
-                ts: election_ts,
-                approvers: _,
-            },
-        )) = elections.last_key_value()
-            && *election_ts == ts
-            && &leader_id == &me.id
-        {
-            Some((*epoch, id))
-        } else {
-            None
-        };
-
-        if let Some((epoch, approver)) = approver {
-            if let Some(Election::Mine { ts: _, approvers }) = elections.get_mut(&epoch) {
-                approvers.insert(approver);
-
-                if approvers.len() == state.nodes.len() - 1
-                    && state
-                        .nodes
-                        .keys()
-                        .filter(|&node_id| *node_id != me.id)
-                        .all(|node_id| approvers.contains(node_id))
-                {
-                    state.elected_leader_id = Some(me.id.clone());
-                    state.epoch = Some(epoch);
-
-                    state
-                        .nodes
-                        .keys()
-                        .filter(|&key| *key != me.id)
-                        .for_each(|key| {
-                            output.push(NodeProtocol::Leader {
-                                id: key.clone(),
-                                epoch,
-                                ts,
-                            });
-                        });
-
-                    elections.clear();
-                    tracing::info!("Me: {:?}", me);
-                    tracing::info!("Leader elected, State: {:?}", state);
-                } else {
-                    tracing::info!("Leader not elected: {:?}", epoch);
-                }
-            }
-        } else if !state.nodes.contains_key(&leader_id) {
-            output.extend(
-                state
-                    .nodes
-                    .keys()
-                    .filter(|&key| *key != me.id)
-                    .map(|key| NodeProtocol::GetClusterState { id: key.clone() }),
-            );
-        }
-    }
-
-    fn handle_vote_request(
-        output: &mut Vec<NodeProtocol>,
-        state: &mut State,
-        id: NodeId,
-        epoch: u64,
-        ts: u64,
-        elections: &mut BTreeMap<u64, Election>,
-    ) {
-        if state.epoch < Some(epoch) {
-            let add_new = if let Some((last_epoch, last_election)) = elections.last_key_value() {
-                let res = epoch > *last_epoch || ts < last_election.ts();
-                if res {
-                    elections.clear();
-                }
-                res
-            } else {
-                true
-            };
-            if add_new {
-                elections.insert(
-                    epoch,
-                    Election::Other {
-                        ts,
-                        candidate_id: id.clone(),
-                    },
-                );
-                output.push(NodeProtocol::VoteResponse {
-                    id: id.clone(),
-                    leader_id: id,
-                    ts,
-                });
-            } else if let Some(Election::Other { ts, candidate_id }) = elections.get(&epoch) {
-                output.push(NodeProtocol::VoteResponse {
-                    id,
-                    leader_id: candidate_id.clone(),
-                    ts: *ts,
-                });
-            }
-        }
-    }
-
-    fn handle_cluster_state(
-        output: &mut Vec<NodeProtocol>,
-        state: &mut State,
-        epoch: u64,
-        leader_id: NodeId,
-        items: Vec<ClusterStateItem>,
-    ) {
-        let accept_items: bool = if state.epoch.is_none() || state.epoch < Some(epoch) {
-            state.epoch = Some(epoch);
-            state.elected_leader_id = Some(leader_id);
-            true
-        } else if state.epoch == Some(epoch) && state.elected_leader_id == Some(leader_id) {
-            true
-        } else {
-            false
-        };
-
-        if accept_items {
-            for ClusterStateItem {
-                id,
-                host,
-                port,
-                last_heartbeat,
-            } in items
-            {
-                if let Some(node) = state.nodes.get_mut(&id) {
-                    if node.last_heartbeat < last_heartbeat {
-                        node.last_heartbeat = last_heartbeat;
-                    }
-                } else {
-                    output.push(NodeProtocol::NewConnection {
-                        id: None,
-                        host,
-                        port,
-                    });
-                }
-            }
-        }
-    }
-
-    fn handle_get_cluster_state(output: &mut Vec<NodeProtocol>, state: &mut State, id: NodeId) {
-        if let Some((epoch, leader_id)) = state.epoch.zip(state.elected_leader_id.clone()) {
-            output.push(NodeProtocol::ClusterState {
-                recipient_id: id.clone(),
-                state: ClusterState {
-                    epoch,
-                    leader_id,
-                    items: state
-                        .nodes
-                        .iter()
-                        .map(|(id, node)| ClusterStateItem {
-                            id: id.clone(),
-                            host: node.host.clone(),
-                            port: node.port,
-                            last_heartbeat: node.last_heartbeat,
-                        })
-                        .collect(),
-                },
-            });
-        }
-    }
-
-    fn handle_heartbeat(
-        output: &mut Vec<NodeProtocol>,
-        state: &mut State,
-        id: NodeId,
-        ts: u64,
-        me: &Arc<Me>,
-    ) {
-        if let Some(node) = state.nodes.get_mut(&id) {
-            node.last_heartbeat = ts;
-            if state.elected_leader_id.as_ref() == Some(&me.id) {
-                output.extend(
-                    state
-                        .nodes
-                        .keys()
-                        .filter(|&key| key != &id && key != &me.id)
-                        .map(|key| NodeProtocol::Heartbeat {
-                            recipient_id: key.clone(),
-                            heartbeat: Heartbeat { id: id.clone(), ts },
-                        }),
-                );
-            }
-        } else {
-            output.extend(
-                state
-                    .nodes
-                    .keys()
-                    .filter(|&key| key != &me.id)
-                    .map(|key| NodeProtocol::GetClusterState { id: key.clone() }),
-            );
-        }
-    }
-
-    fn handle_new_connection(
-        output: &mut Vec<NodeProtocol>,
-        state: &mut State,
-        id: Option<NodeId>,
-        host: String,
-        port: u32,
-        me: &Arc<Me>,
-    ) {
-        if let Some(id) = id {
-            state.nodes.insert(
-                id.clone(),
-                Node {
-                    host,
-                    port,
-                    last_heartbeat: now_millis(),
-                },
-            );
-            tracing::info!("New connection: {:?}", id);
-            tracing::info!("Me: {:?}", me);
-            tracing::info!("State: {:?}", state);
-            if state.elected_leader_id.is_none() || state.elected_leader_id.as_ref() != Some(&me.id)
-            {
-                output.push(NodeProtocol::GetClusterState { id });
-            }
-        }
     }
 
     fn get_init_messages(&mut self, config: Config) -> Vec<NodeProtocol> {
@@ -511,6 +243,266 @@ impl ManagerService {
                 nodes,
             });
             vec![]
+        }
+    }
+}
+
+fn handle_node_disconnected(state: &mut State, id: NodeId, me: &Arc<Me>) {
+    if let Some(_) = state.nodes.remove(&id) {
+        tracing::info!("Node disconnected: {:?}", id);
+        if Some(id) == state.elected_leader_id {
+            state.elected_leader_id = None;
+        }
+        tracing::info!("Me: {:?}", me);
+        tracing::info!("State: {:?}", state);
+    }
+}
+
+fn handle_leader(
+    state: &mut State,
+    id: NodeId,
+    epoch: u64,
+    ts: u64,
+    me: &Arc<Me>,
+    elections: &mut BTreeMap<u64, Election>,
+) {
+    if state.epoch < Some(epoch) {
+        elections.clear();
+        if let Some(leader) = state.nodes.get_mut(&id) {
+            leader.last_heartbeat = ts;
+            state.elected_leader_id = Some(id);
+            state.epoch = Some(epoch);
+        }
+        tracing::info!("Me: {:?}", me);
+        tracing::info!("Leader elected, State: {:?}", state);
+    }
+}
+
+fn handle_vote_response(
+    output: &mut Vec<NodeProtocol>,
+    state: &mut State,
+    id: NodeId,
+    leader_id: NodeId,
+    ts: u64,
+    me: &Arc<Me>,
+    elections: &mut BTreeMap<u64, Election>,
+) {
+    let approver = if let Some((
+        epoch,
+        Election::Mine {
+            ts: election_ts,
+            approvers: _,
+        },
+    )) = elections.last_key_value()
+        && *election_ts == ts
+        && &leader_id == &me.id
+    {
+        Some((*epoch, id))
+    } else {
+        None
+    };
+
+    if let Some((epoch, approver)) = approver {
+        if let Some(Election::Mine { ts: _, approvers }) = elections.get_mut(&epoch) {
+            approvers.insert(approver);
+
+            if approvers.len() == state.nodes.len() - 1
+                && state
+                    .nodes
+                    .keys()
+                    .filter(|&node_id| *node_id != me.id)
+                    .all(|node_id| approvers.contains(node_id))
+            {
+                state.elected_leader_id = Some(me.id.clone());
+                state.epoch = Some(epoch);
+
+                state
+                    .nodes
+                    .keys()
+                    .filter(|&key| *key != me.id)
+                    .for_each(|key| {
+                        output.push(NodeProtocol::Leader {
+                            id: key.clone(),
+                            epoch,
+                            ts,
+                        });
+                    });
+
+                elections.clear();
+                tracing::info!("Me: {:?}", me);
+                tracing::info!("Leader elected, State: {:?}", state);
+            } else {
+                tracing::info!("Leader not elected: {:?}", epoch);
+            }
+        }
+    } else if !state.nodes.contains_key(&leader_id) {
+        output.extend(
+            state
+                .nodes
+                .keys()
+                .filter(|&key| *key != me.id)
+                .map(|key| NodeProtocol::GetClusterState { id: key.clone() }),
+        );
+    }
+}
+
+fn handle_vote_request(
+    output: &mut Vec<NodeProtocol>,
+    state: &mut State,
+    id: NodeId,
+    epoch: u64,
+    ts: u64,
+    elections: &mut BTreeMap<u64, Election>,
+) {
+    if state.epoch < Some(epoch) {
+        let add_new = if let Some((last_epoch, last_election)) = elections.last_key_value() {
+            let res = epoch > *last_epoch || ts < last_election.ts();
+            if res {
+                elections.clear();
+            }
+            res
+        } else {
+            true
+        };
+        if add_new {
+            elections.insert(
+                epoch,
+                Election::Other {
+                    ts,
+                    candidate_id: id.clone(),
+                },
+            );
+            output.push(NodeProtocol::VoteResponse {
+                id: id.clone(),
+                leader_id: id,
+                ts,
+            });
+        } else if let Some(Election::Other { ts, candidate_id }) = elections.get(&epoch) {
+            output.push(NodeProtocol::VoteResponse {
+                id,
+                leader_id: candidate_id.clone(),
+                ts: *ts,
+            });
+        }
+    }
+}
+
+fn handle_cluster_state(
+    output: &mut Vec<NodeProtocol>,
+    state: &mut State,
+    epoch: u64,
+    leader_id: NodeId,
+    items: Vec<ClusterStateItem>,
+) {
+    let accept_items: bool = if state.epoch.is_none() || state.epoch < Some(epoch) {
+        state.epoch = Some(epoch);
+        state.elected_leader_id = Some(leader_id);
+        true
+    } else if state.epoch == Some(epoch) && state.elected_leader_id == Some(leader_id) {
+        true
+    } else {
+        false
+    };
+
+    if accept_items {
+        for ClusterStateItem {
+            id,
+            host,
+            port,
+            last_heartbeat,
+        } in items
+        {
+            if let Some(node) = state.nodes.get_mut(&id) {
+                if node.last_heartbeat < last_heartbeat {
+                    node.last_heartbeat = last_heartbeat;
+                }
+            } else {
+                output.push(NodeProtocol::NewConnection {
+                    id: None,
+                    host,
+                    port,
+                });
+            }
+        }
+    }
+}
+
+fn handle_get_cluster_state(output: &mut Vec<NodeProtocol>, state: &mut State, id: NodeId) {
+    if let Some((epoch, leader_id)) = state.epoch.zip(state.elected_leader_id.clone()) {
+        output.push(NodeProtocol::ClusterState {
+            recipient_id: id.clone(),
+            state: ClusterState {
+                epoch,
+                leader_id,
+                items: state
+                    .nodes
+                    .iter()
+                    .map(|(id, node)| ClusterStateItem {
+                        id: id.clone(),
+                        host: node.host.clone(),
+                        port: node.port,
+                        last_heartbeat: node.last_heartbeat,
+                    })
+                    .collect(),
+            },
+        });
+    }
+}
+
+fn handle_heartbeat(
+    output: &mut Vec<NodeProtocol>,
+    state: &mut State,
+    id: NodeId,
+    ts: u64,
+    me: &Arc<Me>,
+) {
+    if let Some(node) = state.nodes.get_mut(&id) {
+        node.last_heartbeat = ts;
+        if state.elected_leader_id.as_ref() == Some(&me.id) {
+            output.extend(
+                state
+                    .nodes
+                    .keys()
+                    .filter(|&key| key != &id && key != &me.id)
+                    .map(|key| NodeProtocol::Heartbeat {
+                        recipient_id: key.clone(),
+                        heartbeat: Heartbeat { id: id.clone(), ts },
+                    }),
+            );
+        }
+    } else {
+        output.extend(
+            state
+                .nodes
+                .keys()
+                .filter(|&key| key != &me.id)
+                .map(|key| NodeProtocol::GetClusterState { id: key.clone() }),
+        );
+    }
+}
+
+fn handle_new_connection(
+    output: &mut Vec<NodeProtocol>,
+    state: &mut State,
+    id: Option<NodeId>,
+    host: String,
+    port: u32,
+    me: &Arc<Me>,
+) {
+    if let Some(id) = id {
+        state.nodes.insert(
+            id.clone(),
+            Node {
+                host,
+                port,
+                last_heartbeat: now_millis(),
+            },
+        );
+        tracing::info!("New connection: {:?}", id);
+        tracing::info!("Me: {:?}", me);
+        tracing::info!("State: {:?}", state);
+        if state.elected_leader_id.is_none() || state.elected_leader_id.as_ref() != Some(&me.id) {
+            output.push(NodeProtocol::GetClusterState { id });
         }
     }
 }
@@ -869,7 +861,7 @@ mod tests {
         });
 
         let mut output = vec![];
-        ManagerService::handle_cluster_state(
+        handle_cluster_state(
             &mut output,
             service.state.as_mut().unwrap(),
             2,
@@ -919,7 +911,7 @@ mod tests {
         });
 
         let mut output = vec![];
-        ManagerService::handle_cluster_state(
+        handle_cluster_state(
             &mut output,
             service.state.as_mut().unwrap(),
             2,
@@ -961,7 +953,7 @@ mod tests {
             },
         );
 
-        ManagerService::handle_leader(
+        handle_leader(
             service.state.as_mut().unwrap(),
             leader.clone(),
             2,
@@ -1357,7 +1349,7 @@ mod tests {
         });
 
         let mut first = vec![];
-        ManagerService::handle_cluster_state(
+        handle_cluster_state(
             &mut first,
             service.state.as_mut().unwrap(),
             4,
@@ -1403,7 +1395,7 @@ mod tests {
         );
 
         let mut same_epoch_same_leader = vec![];
-        ManagerService::handle_cluster_state(
+        handle_cluster_state(
             &mut same_epoch_same_leader,
             service.state.as_mut().unwrap(),
             4,
@@ -1429,7 +1421,7 @@ mod tests {
         );
 
         let mut conflict = vec![];
-        ManagerService::handle_cluster_state(
+        handle_cluster_state(
             &mut conflict,
             service.state.as_mut().unwrap(),
             4,
@@ -1478,7 +1470,7 @@ mod tests {
             ]),
         });
 
-        ManagerService::handle_leader(
+        handle_leader(
             service.state.as_mut().unwrap(),
             leader.clone(),
             2,
@@ -1503,7 +1495,7 @@ mod tests {
             now
         );
 
-        ManagerService::handle_leader(
+        handle_leader(
             service.state.as_mut().unwrap(),
             me.id.clone(),
             1,
