@@ -128,7 +128,7 @@ impl ManagerService {
                 }
 
                 if state.elected_leader_id.is_some()
-                    && state.elected_leader_id != Some(self.me.id.clone())
+                    && state.elected_leader_id.as_ref() != Some(&self.me.id)
                 {
                     if let Some(leader) = state
                         .nodes
@@ -166,7 +166,7 @@ impl ManagerService {
                         tracing::info!("Me: {:?}", self.me);
                         tracing::info!("State: {:?}", state);
                         if state.elected_leader_id.is_none()
-                            || state.elected_leader_id != Some(self.me.id.clone())
+                            || state.elected_leader_id.as_ref() != Some(&self.me.id)
                         {
                             output.push(NodeProtocol::GetClusterState { id });
                         }
@@ -178,7 +178,7 @@ impl ManagerService {
                 } => {
                     if let Some(node) = state.nodes.get_mut(&id) {
                         node.last_heartbeat = ts;
-                        if state.elected_leader_id == Some(self.me.id.clone()) {
+                        if state.elected_leader_id.as_ref() == Some(&self.me.id) {
                             output.extend(
                                 state
                                     .nodes
