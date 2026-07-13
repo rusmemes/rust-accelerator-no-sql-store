@@ -48,7 +48,6 @@ impl Election {
 // the idea comes from https://www.studocu.com/en-us/document/university-of-southern-california/database-systems/raft-atc14-this-description/146541342?utm_source=chatgpt.com&sid=97f67133-a2c0-4139-90bd-dabaf62ce79f1783977310
 const RANDOMIZED_ELECTION_TIMEOUT_INTERVAL: Range<u64> = 500..1000;
 const HEARTBEAT_INTERVAL_MS: u64 = 200;
-const LEADER_HEARTBEAT_EXPIRATION_TIME_MS: u64 = 500;
 
 #[derive(Debug)]
 struct ManagerService {
@@ -142,7 +141,7 @@ impl ManagerService {
                         .nodes
                         .get_mut(&state.elected_leader_id.as_ref().unwrap())
                     {
-                        if leader.last_heartbeat + LEADER_HEARTBEAT_EXPIRATION_TIME_MS < now {
+                        if leader.last_heartbeat + random_range(RANDOMIZED_ELECTION_TIMEOUT_INTERVAL) < now {
                             state.elected_leader_id = None;
                         }
                     }
