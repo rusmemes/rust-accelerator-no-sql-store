@@ -3,13 +3,9 @@ use crate::manager::domain::{ClusterState, ClusterStateItem, Heartbeat, NodeProt
 use rand::random_range;
 use std::{
     cmp::max,
-    collections::{
-        BTreeMap,
-        HashMap,
-        HashSet
-    },
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
-    time::Duration
+    time::Duration,
 };
 use tokio::{
     select,
@@ -115,8 +111,7 @@ impl ManagerService {
         output
     }
 
-    fn tick(&mut self) -> Vec<NodeProtocol> {
-        let mut output = vec![];
+    fn tick(&mut self, output: &mut Vec<NodeProtocol>) {
         if let Some(state) = self.state.as_mut() {
             if let Some(node) = state.nodes.get_mut(&self.me.id) {
                 let now = now_millis();
@@ -151,24 +146,22 @@ impl ManagerService {
         }
         tracing::debug!("state: {:?}", self.state);
         tracing::debug!("elections: {:?}", self.elections);
-        output
     }
 
-    fn process(&mut self, msg: NodeProtocol) -> Vec<NodeProtocol> {
-        let mut output = vec![];
+    fn process(&mut self, msg: NodeProtocol, output: &mut Vec<NodeProtocol>) {
         if let Some(state) = self.state.as_mut() {
             match msg {
                 NodeProtocol::NewConnection { id, host, port } => {
-                    handle_new_connection(&mut output, state, id, host, port, &self.me);
+                    handle_new_connection(output, state, id, host, port, &self.me);
                 }
                 NodeProtocol::Heartbeat {
                     recipient_id: _,
                     heartbeat: Heartbeat { id, ts },
                 } => {
-                    handle_heartbeat(&mut output, state, id, ts, &self.me);
+                    handle_heartbeat(output, state, id, ts, &self.me);
                 }
                 NodeProtocol::GetClusterState { id } => {
-                    handle_get_cluster_state(&mut output, state, id);
+                    handle_get_cluster_state(output, state, id);
                 }
                 NodeProtocol::ClusterState {
                     recipient_id: _,
@@ -179,16 +172,16 @@ impl ManagerService {
                             items,
                         },
                 } => {
-                    handle_cluster_state(&mut output, state, epoch, leader_id, items);
+                    handle_cluster_state(output, state, epoch, leader_id, items);
                 }
                 NodeProtocol::VoteRequest { id, epoch, ts } => {
                     tracing::info!("VoteRequest: {:?} {:?}", id, epoch);
-                    handle_vote_request(&mut output, state, id, epoch, ts, &mut self.elections);
+                    handle_vote_request(output, state, id, epoch, ts, &mut self.elections);
                 }
                 NodeProtocol::VoteResponse { id, leader_id, ts } => {
                     tracing::info!("VoteResponse: {:?} {:?}", id, leader_id);
                     handle_vote_response(
-                        &mut output,
+                        output,
                         state,
                         id,
                         leader_id,
@@ -206,8 +199,7 @@ impl ManagerService {
             }
         }
 
-        output.extend(self.tick());
-        output
+        self.tick(output)
     }
 
     fn get_init_messages(&mut self, config: Config) -> Vec<NodeProtocol> {
@@ -534,7 +526,7 @@ pub async fn start_service(
 
     tracing::info!("Manager service started");
     let mut ticker = tokio::time::interval(Duration::from_millis(100));
-
+    let mut output = vec![];
     loop {
         select! {
             biased;
@@ -545,7 +537,8 @@ pub async fn start_service(
             node_protocol = rx.recv() => {
                 if let Some(message) = node_protocol {
                     tracing::debug!("input: {:?}", message);
-                    for msg in service.process(message) {
+                    service.process(message, &mut output);
+                    for msg in output.drain(..) {
                         if let Err(e) = tx.send(msg).await {
                             tracing::error!("Error sending response: {}", e);
                         }
@@ -553,7 +546,8 @@ pub async fn start_service(
                 }
             }
             _ = ticker.tick() => {
-                for msg in service.tick() {
+                service.tick(&mut output);
+                for msg in output.drain(..) {
                     if let Err(e) = tx.send(msg).await {
                         tracing::error!("Error sending response: {}", e);
                     }
@@ -655,11 +649,15 @@ mod tests {
             nodes: HashMap::from([(me.id.clone(), fresh_node(&me, now_millis()))]),
         });
 
-        let output = service.process(NodeProtocol::NewConnection {
-            id: Some(peer_id.clone()),
-            host: "peer.local".to_string(),
-            port: 9001,
-        });
+        let mut output = vec![];
+        service.process(
+            NodeProtocol::NewConnection {
+                id: Some(peer_id.clone()),
+                host: "peer.local".to_string(),
+                port: 9001,
+            },
+            &mut output,
+        );
 
         assert!(matches!(
             output.as_slice(),
@@ -692,9 +690,13 @@ mod tests {
             ]),
         });
 
-        let output = service.process(NodeProtocol::GetClusterState {
-            id: peer_id.clone(),
-        });
+        let mut output = vec![];
+        service.process(
+            NodeProtocol::GetClusterState {
+                id: peer_id.clone(),
+            },
+            &mut output,
+        );
 
         assert!(matches!(
             output.as_slice(),
@@ -723,13 +725,17 @@ mod tests {
             ]),
         });
 
-        let output = service.process(NodeProtocol::Heartbeat {
-            recipient_id: me.id.clone(),
-            heartbeat: Heartbeat {
-                id: node_id("33333333-3333-3333-3333-333333333333"),
-                ts: 42,
+        let mut output = vec![];
+        service.process(
+            NodeProtocol::Heartbeat {
+                recipient_id: me.id.clone(),
+                heartbeat: Heartbeat {
+                    id: node_id("33333333-3333-3333-3333-333333333333"),
+                    ts: 42,
+                },
             },
-        });
+            &mut output,
+        );
 
         assert!(matches!(
             output.as_slice(),
@@ -754,13 +760,17 @@ mod tests {
             ]),
         });
 
-        let output = service.process(NodeProtocol::Heartbeat {
-            recipient_id: me.id.clone(),
-            heartbeat: Heartbeat {
-                id: peer_one.clone(),
-                ts: 42,
+        let mut output = vec![];
+        service.process(
+            NodeProtocol::Heartbeat {
+                recipient_id: me.id.clone(),
+                heartbeat: Heartbeat {
+                    id: peer_one.clone(),
+                    ts: 42,
+                },
             },
-        });
+            &mut output,
+        );
 
         assert!(matches!(
             output.as_slice(),
@@ -786,11 +796,15 @@ mod tests {
             ]),
         });
 
-        let output = service.process(NodeProtocol::VoteRequest {
-            id: candidate.clone(),
-            epoch: 2,
-            ts: 100,
-        });
+        let mut output = vec![];
+        service.process(
+            NodeProtocol::VoteRequest {
+                id: candidate.clone(),
+                epoch: 2,
+                ts: 100,
+            },
+            &mut output,
+        );
 
         assert!(matches!(
             output.as_slice(),
@@ -830,11 +844,15 @@ mod tests {
             },
         );
 
-        let output = service.process(NodeProtocol::VoteRequest {
-            id: requester.clone(),
-            epoch: 2,
-            ts: 200,
-        });
+        let mut output = vec![];
+        service.process(
+            NodeProtocol::VoteRequest {
+                id: requester.clone(),
+                epoch: 2,
+                ts: 200,
+            },
+            &mut output,
+        );
 
         assert!(matches!(
             output.as_slice(),
@@ -997,7 +1015,8 @@ mod tests {
             ]),
         });
 
-        let output = service.tick();
+        let mut output = vec![];
+        service.tick(&mut output);
 
         assert!(matches!(
             output.as_slice(),
@@ -1021,7 +1040,8 @@ mod tests {
             ]),
         });
 
-        let output = service.tick();
+        let mut output = vec![];
+        service.tick(&mut output);
 
         assert!(matches!(
             output.as_slice(),
@@ -1071,18 +1091,26 @@ mod tests {
             },
         );
 
-        let first = service.process(NodeProtocol::VoteResponse {
-            id: peer_one.clone(),
-            leader_id: me.id.clone(),
-            ts: 100,
-        });
+        let mut first = vec![];
+        service.process(
+            NodeProtocol::VoteResponse {
+                id: peer_one.clone(),
+                leader_id: me.id.clone(),
+                ts: 100,
+            },
+            &mut first,
+        );
         assert!(first.is_empty());
 
-        let second = service.process(NodeProtocol::VoteResponse {
-            id: peer_two.clone(),
-            leader_id: me.id.clone(),
-            ts: 100,
-        });
+        let mut second = vec![];
+        service.process(
+            NodeProtocol::VoteResponse {
+                id: peer_two.clone(),
+                leader_id: me.id.clone(),
+                ts: 100,
+            },
+            &mut second,
+        );
 
         assert_eq!(
             service.state.as_ref().unwrap().elected_leader_id,
@@ -1120,7 +1148,11 @@ mod tests {
             )]),
         });
 
-        let output = service.process(NodeProtocol::NodeDisconnected { id: leader.clone() });
+        let mut output = vec![];
+        service.process(
+            NodeProtocol::NodeDisconnected { id: leader.clone() },
+            &mut output,
+        );
 
         assert!(output.is_empty());
         let state = service.state.as_ref().unwrap();
@@ -1150,11 +1182,15 @@ mod tests {
             ]),
         });
 
-        let output = service.process(NodeProtocol::NewConnection {
-            id: Some(node_id("33333333-3333-3333-3333-333333333333")),
-            host: "third.local".to_string(),
-            port: 9002,
-        });
+        let mut output = vec![];
+        service.process(
+            NodeProtocol::NewConnection {
+                id: Some(node_id("33333333-3333-3333-3333-333333333333")),
+                host: "third.local".to_string(),
+                port: 9002,
+            },
+            &mut output,
+        );
 
         assert!(output.is_empty());
     }
@@ -1190,13 +1226,17 @@ mod tests {
             ]),
         });
 
-        let forwarded = service.process(NodeProtocol::Heartbeat {
-            recipient_id: me.id.clone(),
-            heartbeat: Heartbeat {
-                id: peer_one.clone(),
-                ts: 42,
+        let mut forwarded = vec![];
+        service.process(
+            NodeProtocol::Heartbeat {
+                recipient_id: me.id.clone(),
+                heartbeat: Heartbeat {
+                    id: peer_one.clone(),
+                    ts: 42,
+                },
             },
-        });
+            &mut forwarded,
+        );
 
         assert!(matches!(
             forwarded.as_slice(),
@@ -1206,13 +1246,17 @@ mod tests {
 
         service.state.as_mut().unwrap().elected_leader_id = Some(peer_two.clone());
 
-        let not_forwarded = service.process(NodeProtocol::Heartbeat {
-            recipient_id: me.id.clone(),
-            heartbeat: Heartbeat {
-                id: peer_one.clone(),
-                ts: 43,
+        let mut not_forwarded = vec![];
+        service.process(
+            NodeProtocol::Heartbeat {
+                recipient_id: me.id.clone(),
+                heartbeat: Heartbeat {
+                    id: peer_one.clone(),
+                    ts: 43,
+                },
             },
-        });
+            &mut not_forwarded,
+        );
 
         assert!(not_forwarded.is_empty());
         assert_eq!(
@@ -1259,33 +1303,37 @@ mod tests {
             ]),
         });
 
-        let first = service.process(NodeProtocol::VoteRequest {
+        let mut first = vec![];
+        service.process(NodeProtocol::VoteRequest {
             id: peer_one.clone(),
             epoch: 1,
             ts: 100,
-        });
+        }, &mut first);
         assert!(matches!(
             first.as_slice(),
             [NodeProtocol::VoteResponse { id, leader_id, ts }]
                 if id == &peer_one && leader_id == &peer_one && *ts == 100
         ));
 
-        let second = service.process(NodeProtocol::VoteRequest {
+        let mut second = vec![];
+            service.process(NodeProtocol::VoteRequest {
             id: peer_two.clone(),
             epoch: 1,
             ts: 200,
-        });
+        }, &mut second);
+
         assert!(matches!(
             second.as_slice(),
             [NodeProtocol::VoteResponse { id, leader_id, ts }]
                 if id == &peer_two && leader_id == &peer_one && *ts == 100
         ));
 
-        let stale = service.process(NodeProtocol::VoteRequest {
+        let mut stale = vec![];
+        service.process(NodeProtocol::VoteRequest {
             id: peer_two.clone(),
             epoch: 0,
             ts: 300,
-        });
+        }, &mut stale);
         assert!(stale.is_empty());
     }
 
@@ -1319,11 +1367,12 @@ mod tests {
             },
         );
 
-        let output = service.process(NodeProtocol::VoteResponse {
+        let mut output = vec![];
+        service.process(NodeProtocol::VoteResponse {
             id: peer.clone(),
             leader_id: unknown_leader,
             ts: 100,
-        });
+        }, &mut output);
 
         assert!(matches!(
             output.as_slice(),
@@ -1526,9 +1575,10 @@ mod tests {
             nodes: HashMap::from([(me.id.clone(), fresh_node(&me, now_millis()))]),
         });
 
-        let output = service.process(NodeProtocol::GetClusterState {
+        let mut output = vec![];
+        service.process(NodeProtocol::GetClusterState {
             id: node_id("22222222-2222-2222-2222-222222222222"),
-        });
+        }, &mut output);
 
         assert!(output.is_empty());
     }
@@ -1554,9 +1604,10 @@ mod tests {
             ]),
         });
 
-        let output = service.process(NodeProtocol::NodeDisconnected {
+        let mut output = vec![];
+        service.process(NodeProtocol::NodeDisconnected {
             id: node_id("33333333-3333-3333-3333-333333333333"),
-        });
+        }, &mut output);
 
         assert!(output.is_empty());
         let state = service.state.as_ref().unwrap();
@@ -1587,7 +1638,8 @@ mod tests {
             ]),
         });
 
-        let output = service.tick();
+        let mut output = vec![];
+        service.tick(&mut output);
 
         assert!(output.is_empty());
         assert_eq!(service.state.as_ref().unwrap().elected_leader_id, None);
@@ -1614,7 +1666,8 @@ mod tests {
             ]),
         });
 
-        let output = service.tick();
+        let mut output = vec![];
+        service.tick(&mut output);
 
         assert!(matches!(
             output.as_slice(),
