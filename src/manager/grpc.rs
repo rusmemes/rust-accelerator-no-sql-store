@@ -37,6 +37,8 @@ mod common {
     }
 }
 
+const GRPC_CONNECTION_CHANNEL_BUFFER_SIZE: usize = 32;
+
 /**
 EitherStream is a stream that can send messages to either a Sender<Result<Message, Status>> or a Sender<Message>.
 It is used to send messages to either the gRPC output stream or the gRPC input stream.
@@ -285,7 +287,7 @@ async fn new_connection(
     match client {
         Ok(mut client) => {
             tracing::debug!("Connecting to manager");
-            let (grpc_output, rx) = tokio::sync::mpsc::channel::<Message>(32);
+            let (grpc_output, rx) = tokio::sync::mpsc::channel::<Message>(GRPC_CONNECTION_CHANNEL_BUFFER_SIZE);
             let outbound = ReceiverStream::new(rx);
 
             let response = client.open_connection(Request::new(outbound)).await;
@@ -521,7 +523,7 @@ impl ManagerApi for ManagerApiService {
 
         let remote_addr = request.remote_addr();
         let mut input_stream: Streaming<Message> = request.into_inner();
-        let (grpc_tx, rx) = tokio::sync::mpsc::channel(32);
+        let (grpc_tx, rx) = tokio::sync::mpsc::channel(GRPC_CONNECTION_CHANNEL_BUFFER_SIZE);
 
         let sessions = self.sessions.clone();
         let tx = self.tx.clone();

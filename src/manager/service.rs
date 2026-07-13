@@ -1,6 +1,7 @@
 use crate::common::{now_millis, Config, Me, NodeId};
 use crate::manager::domain::{ClusterState, ClusterStateItem, Heartbeat, NodeProtocol};
 use rand::random_range;
+use std::ops::Range;
 use std::{
     cmp::max,
     collections::{BTreeMap, HashMap, HashSet},
@@ -42,6 +43,11 @@ impl Election {
     }
 }
 
+// the idea is coming from https://www.studocu.com/en-us/document/university-of-southern-california/database-systems/raft-atc14-this-description/146541342?utm_source=chatgpt.com&sid=97f67133-a2c0-4139-90bd-dabaf62ce79f1783977310
+const RANDOMIZED_ELECTION_TIMEOUT_INTERVAL: Range<u64> = 500..1000;
+const HEARTBEAT_INTERVAL_MS: u64 = 200;
+const LEADER_HEARTBEAT_EXPIRATION_TIME_MS: u64 = 500;
+
 #[derive(Debug)]
 struct ManagerService {
     me: Arc<Me>,
@@ -60,7 +66,6 @@ impl ManagerService {
 
     fn start_election_if_needed(&mut self) -> Vec<NodeProtocol> {
         let mut output = vec![];
-
         if let Some(state) = self.state.as_mut()
             && state.elected_leader_id.is_none()
             && state.nodes.len() > 1
@@ -70,11 +75,11 @@ impl ManagerService {
             let election = self.elections.last_key_value();
             let start_new = if let Some((_, last_election)) = election {
                 match last_election {
-                    Election::Mine { ts, approvers: _ } => ts + random_range(500..1000) < curr_ts,
+                    Election::Mine { ts, approvers: _ } => ts + random_range(RANDOMIZED_ELECTION_TIMEOUT_INTERVAL) < curr_ts,
                     Election::Other {
                         ts,
                         candidate_id: _,
-                    } => ts + random_range(500..1000) < curr_ts,
+                    } => ts + random_range(RANDOMIZED_ELECTION_TIMEOUT_INTERVAL) < curr_ts,
                 }
             } else {
                 true
@@ -115,7 +120,7 @@ impl ManagerService {
         if let Some(state) = self.state.as_mut() {
             if let Some(node) = state.nodes.get_mut(&self.me.id) {
                 let now = now_millis();
-                if node.last_heartbeat + 200 < now {
+                if node.last_heartbeat + HEARTBEAT_INTERVAL_MS <= now {
                     node.last_heartbeat = now;
                     output.extend(state.nodes.keys().filter(|&key| *key != self.me.id).map(
                         |key| NodeProtocol::Heartbeat {
@@ -135,7 +140,7 @@ impl ManagerService {
                         .nodes
                         .get_mut(&state.elected_leader_id.as_ref().unwrap())
                     {
-                        if leader.last_heartbeat + 500 < now {
+                        if leader.last_heartbeat + LEADER_HEARTBEAT_EXPIRATION_TIME_MS < now {
                             state.elected_leader_id = None;
                         }
                     }
