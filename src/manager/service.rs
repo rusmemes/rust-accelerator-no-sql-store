@@ -1304,11 +1304,14 @@ mod tests {
         });
 
         let mut first = vec![];
-        service.process(NodeProtocol::VoteRequest {
-            id: peer_one.clone(),
-            epoch: 1,
-            ts: 100,
-        }, &mut first);
+        service.process(
+            NodeProtocol::VoteRequest {
+                id: peer_one.clone(),
+                epoch: 1,
+                ts: 100,
+            },
+            &mut first,
+        );
         assert!(matches!(
             first.as_slice(),
             [NodeProtocol::VoteResponse { id, leader_id, ts }]
@@ -1316,11 +1319,14 @@ mod tests {
         ));
 
         let mut second = vec![];
-            service.process(NodeProtocol::VoteRequest {
-            id: peer_two.clone(),
-            epoch: 1,
-            ts: 200,
-        }, &mut second);
+        service.process(
+            NodeProtocol::VoteRequest {
+                id: peer_two.clone(),
+                epoch: 1,
+                ts: 200,
+            },
+            &mut second,
+        );
 
         assert!(matches!(
             second.as_slice(),
@@ -1329,11 +1335,14 @@ mod tests {
         ));
 
         let mut stale = vec![];
-        service.process(NodeProtocol::VoteRequest {
-            id: peer_two.clone(),
-            epoch: 0,
-            ts: 300,
-        }, &mut stale);
+        service.process(
+            NodeProtocol::VoteRequest {
+                id: peer_two.clone(),
+                epoch: 0,
+                ts: 300,
+            },
+            &mut stale,
+        );
         assert!(stale.is_empty());
     }
 
@@ -1368,11 +1377,14 @@ mod tests {
         );
 
         let mut output = vec![];
-        service.process(NodeProtocol::VoteResponse {
-            id: peer.clone(),
-            leader_id: unknown_leader,
-            ts: 100,
-        }, &mut output);
+        service.process(
+            NodeProtocol::VoteResponse {
+                id: peer.clone(),
+                leader_id: unknown_leader,
+                ts: 100,
+            },
+            &mut output,
+        );
 
         assert!(matches!(
             output.as_slice(),
@@ -1576,9 +1588,12 @@ mod tests {
         });
 
         let mut output = vec![];
-        service.process(NodeProtocol::GetClusterState {
-            id: node_id("22222222-2222-2222-2222-222222222222"),
-        }, &mut output);
+        service.process(
+            NodeProtocol::GetClusterState {
+                id: node_id("22222222-2222-2222-2222-222222222222"),
+            },
+            &mut output,
+        );
 
         assert!(output.is_empty());
     }
@@ -1605,9 +1620,12 @@ mod tests {
         });
 
         let mut output = vec![];
-        service.process(NodeProtocol::NodeDisconnected {
-            id: node_id("33333333-3333-3333-3333-333333333333"),
-        }, &mut output);
+        service.process(
+            NodeProtocol::NodeDisconnected {
+                id: node_id("33333333-3333-3333-3333-333333333333"),
+            },
+            &mut output,
+        );
 
         assert!(output.is_empty());
         let state = service.state.as_ref().unwrap();
