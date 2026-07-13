@@ -43,7 +43,9 @@ impl Election {
     }
 }
 
-// the idea is coming from https://www.studocu.com/en-us/document/university-of-southern-california/database-systems/raft-atc14-this-description/146541342?utm_source=chatgpt.com&sid=97f67133-a2c0-4139-90bd-dabaf62ce79f1783977310
+// to make nodes trying to start elections at different times, we randomize the election timeout interval
+// so that the elections are not all started at the same time, and the elections are not all started at the same time
+// the idea comes from https://www.studocu.com/en-us/document/university-of-southern-california/database-systems/raft-atc14-this-description/146541342?utm_source=chatgpt.com&sid=97f67133-a2c0-4139-90bd-dabaf62ce79f1783977310
 const RANDOMIZED_ELECTION_TIMEOUT_INTERVAL: Range<u64> = 500..1000;
 const HEARTBEAT_INTERVAL_MS: u64 = 200;
 const LEADER_HEARTBEAT_EXPIRATION_TIME_MS: u64 = 500;
