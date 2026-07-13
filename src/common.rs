@@ -86,3 +86,8 @@ pub fn now_millis() -> u64 {
         .expect("Time went backwards")
         .as_millis() as u64
 }
+
+pub enum Either<A, B> {
+    Left(A),
+    Right(B),
+}

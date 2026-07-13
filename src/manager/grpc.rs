@@ -1,15 +1,4 @@
-mod api {
-    pub mod v1 {
-        tonic::include_proto!("manager_api.v1");
-    }
-}
-
-mod common {
-    pub mod v1 {
-        tonic::include_proto!("common.v1");
-    }
-}
-
+use crate::common::Either;
 use crate::{
     common::{Me, NodeId},
     manager::{
@@ -36,32 +25,43 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{transport::Server, Request, Response, Status, Streaming};
 
-enum Either<A, B> {
-    Left(A),
-    Right(B),
+mod api {
+    pub mod v1 {
+        tonic::include_proto!("manager_api.v1");
+    }
 }
 
+mod common {
+    pub mod v1 {
+        tonic::include_proto!("common.v1");
+    }
+}
+
+/**
+EitherStream is a stream that can send messages to either a Sender<Result<Message, Status>> or a Sender<Message>.
+It is used to send messages to either the gRPC output stream or the gRPC input stream.
+The first Sender is used for gRPC output stream, the second Sender is used for gRPC input stream.
+*/
 type EitherStream = Either<Sender<Result<Message, Status>>, Sender<Message>>;
 
 impl EitherStream {
-    async fn send(&self, message: Message) -> Result<(), Either<Message, Status>> {
+    async fn send(&self, message: Message) -> Result<(), Either<Status, Message>> {
         match self {
             EitherStream::Left(sender) => {
                 if let Err(e) = sender.send(Ok(message)).await {
                     let result = e.0;
                     if let Err(status) = result {
-                        return Err(Either::Right(status));
+                        return Err(Either::Left(status));
                     }
                 }
-                Ok(())
             }
             EitherStream::Right(sender) => {
                 if let Err(e) = sender.send(message).await {
-                    return Err(Either::Left(e.0));
+                    return Err(Either::Right(e.0));
                 }
-                Ok(())
             }
         }
+        Ok(())
     }
 
     fn is_closed(&self) -> bool {
@@ -123,6 +123,33 @@ async fn output(
     }
 }
 
+async fn handle_common(
+    event_type: &'static str,
+    payload: Payload,
+    tx: &Sender<NodeProtocol>,
+    sessions: &Arc<RwLock<HashMap<NodeId, EitherStream>>>,
+    id: NodeId,
+) {
+    if let Some(sender) = sessions.read().await.get(&id) {
+        if sender.is_closed() {
+            tracing::debug!("Node {} is disconnected", id);
+            sessions.write().await.remove(&id);
+            let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
+        } else if let Err(e) = sender
+            .send(Message {
+                payload: Some(payload),
+            })
+            .await
+        {
+            if let Either::Left(status) = e {
+                tracing::error!("Error sending {event_type} to {}: status {}", id, status);
+            } else {
+                tracing::error!("Error sending {event_type} to {}", id);
+            }
+        }
+    }
+}
+
 async fn handle_output_leader(
     me: &Arc<Me>,
     tx: &Sender<NodeProtocol>,
@@ -132,32 +159,17 @@ async fn handle_output_leader(
     ts: u64,
 ) {
     // only leader node can send it
-    if let Some(sender) = sessions.read().await.get(&id) {
-        if sender.is_closed() {
-            tracing::debug!("Node {} is disconnected", id);
-            sessions.write().await.remove(&id);
-            let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
-        } else if let Err(e) = sender
-            .send(Message {
-                payload: Some(Payload::Leader(Leader {
-                    id: me.id.to_string(),
-                    epoch,
-                    ts,
-                })),
-            })
-            .await
-        {
-            if let Either::Right(status) = e {
-                tracing::error!(
-                    "Error sending Leader notification to {}: status {}",
-                    id,
-                    status
-                );
-            } else {
-                tracing::error!("Error sending Leader notification to {}", id);
-            }
-        }
-    }
+    handle_common(
+        "Leader",
+        Payload::Leader(Leader {
+            id: me.id.to_string(),
+            epoch,
+            ts,
+        }),
+        tx,
+        sessions,
+        id,
+    ).await;
 }
 
 async fn handle_output_vote_response(
@@ -167,27 +179,16 @@ async fn handle_output_vote_response(
     leader_id: NodeId,
     ts: u64,
 ) {
-    if let Some(sender) = sessions.read().await.get(&id) {
-        if sender.is_closed() {
-            tracing::debug!("Node {} is disconnected", id);
-            sessions.write().await.remove(&id);
-            let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
-        } else if let Err(e) = sender
-            .send(Message {
-                payload: Some(Payload::VoteResponse(VoteResponse {
-                    leader_id: leader_id.to_string(),
-                    ts,
-                })),
-            })
-            .await
-        {
-            if let Either::Right(status) = e {
-                tracing::error!("Error sending VoteResponse to {}: status {}", id, status);
-            } else {
-                tracing::error!("Error sending VoteResponse to {}", id);
-            }
-        }
-    }
+    handle_common(
+        "VoteResponse",
+        Payload::VoteResponse(VoteResponse {
+            leader_id: leader_id.to_string(),
+            ts,
+        }),
+        tx,
+        sessions,
+        id,
+    ).await;
 }
 
 async fn handle_output_vote_request(
@@ -197,74 +198,47 @@ async fn handle_output_vote_request(
     epoch: u64,
     ts: u64,
 ) {
-    if let Some(sender) = sessions.read().await.get(&id) {
-        if sender.is_closed() {
-            tracing::debug!("Node {} is disconnected", id);
-            sessions.write().await.remove(&id);
-            let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
-        } else if let Err(e) = sender
-            .send(Message {
-                payload: Some(Payload::VoteRequest(VoteRequest { epoch, ts })),
-            })
-            .await
-        {
-            if let Either::Right(status) = e {
-                tracing::error!("Error sending VoteRequest to {}: status {}", id, status);
-            } else {
-                tracing::error!("Error sending VoteRequest to {}", id);
-            }
-        }
-    }
+    handle_common(
+        "VoteRequest",
+        Payload::VoteRequest(VoteRequest {
+            epoch,
+            ts,
+        }),
+        tx,
+        sessions,
+        id,
+    ).await;
 }
 
 async fn handle_output_cluster_state(
     tx: &Sender<NodeProtocol>,
     sessions: &Arc<RwLock<HashMap<NodeId, EitherStream>>>,
-    recipient_id: NodeId,
+    id: NodeId,
     epoch: u64,
     leader_id: NodeId,
     items: Vec<domain::ClusterStateItem>,
 ) {
-    if let Some(sender) = sessions.read().await.get(&recipient_id) {
-        if sender.is_closed() {
-            tracing::debug!("Node {} is disconnected", recipient_id);
-            sessions.write().await.remove(&recipient_id);
-            let _ = tx
-                .send(NodeProtocol::NodeDisconnected { id: recipient_id })
-                .await;
-        } else if let Err(e) = sender
-            .send(Message {
-                payload: Some(Payload::ClusterState(ClusterState {
-                    epoch,
-                    leader_id: leader_id.to_string(),
-                    items: items
-                        .into_iter()
-                        .map(|item| ClusterStateItem {
-                            id: item.id.to_string(),
-                            addr: Some(Addr {
-                                host: item.host,
-                                port: item.port,
-                            }),
-                            last_heartbeat: item.last_heartbeat,
-                        })
-                        .collect(),
-                })),
-            })
-            .await
-        {
-            if let Either::Right(status) = e {
-                tracing::error!(
-                    "Error sending ClusterState to {}: status {}",
-                    recipient_id,
-                    status
-                );
-            } else {
-                tracing::error!("Error sending ClusterState to {}", recipient_id);
-            }
-        }
-    } else {
-        tracing::error!("Received ClusterState for unknown node {}", recipient_id);
-    }
+    handle_common(
+        "ClusterState",
+        Payload::ClusterState(ClusterState {
+            epoch,
+            leader_id: leader_id.to_string(),
+            items: items
+                .into_iter()
+                .map(|item| ClusterStateItem {
+                    id: item.id.to_string(),
+                    addr: Some(Addr {
+                        host: item.host,
+                        port: item.port,
+                    }),
+                    last_heartbeat: item.last_heartbeat,
+                })
+                .collect(),
+        }),
+        tx,
+        sessions,
+        id,
+    ).await;
 }
 
 async fn handle_output_get_cluster_state(
@@ -272,30 +246,13 @@ async fn handle_output_get_cluster_state(
     sessions: &Arc<RwLock<HashMap<NodeId, EitherStream>>>,
     id: NodeId,
 ) {
-    if let Some(sender) = sessions.read().await.get(&id) {
-        if sender.is_closed() {
-            tracing::debug!("Node {} is disconnected", id);
-            sessions.write().await.remove(&id);
-            let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
-        } else if let Err(e) = sender
-            .send(Message {
-                payload: Some(Payload::GetClusterState(GetClusterState {})),
-            })
-            .await
-        {
-            if let Either::Right(status) = e {
-                tracing::error!(
-                    "Error sending GetClusterState request to {}: status {}",
-                    id,
-                    status
-                );
-            } else {
-                tracing::error!("Error sending GetClusterState request to {}", id);
-            }
-        }
-    } else {
-        tracing::error!("Received GetClusterState request for unknown node {}", id);
-    }
+    handle_common(
+        "GetClusterState",
+        Payload::GetClusterState(GetClusterState {}),
+        tx,
+        sessions,
+        id,
+    ).await;
 }
 
 async fn handle_output_heartbeat(
@@ -305,31 +262,16 @@ async fn handle_output_heartbeat(
     node_id: NodeId,
     ts: u64,
 ) {
-    if let Some(sender) = sessions.read().await.get(&id) {
-        if sender.is_closed() {
-            tracing::info!("Node {} is disconnected", id);
-            sessions.write().await.remove(&id);
-            if let Err(e) = tx.send(NodeProtocol::NodeDisconnected { id }).await {
-                tracing::error!("Error sending NodeDisconnected: {}", e);
-            }
-        } else if let Err(e) = sender
-            .send(Message {
-                payload: Some(Payload::Heartbeat(Heartbeat {
-                    id: node_id.to_string(),
-                    ts,
-                })),
-            })
-            .await
-        {
-            if let Either::Right(status) = e {
-                tracing::error!("Error sending heartbeat to {}: status {}", id, status);
-            } else {
-                tracing::error!("Error sending heartbeat to {}", id);
-            }
-        }
-    } else {
-        tracing::error!("Sending heartbeat to unknown node {}", id);
-    }
+    handle_common(
+        "Heartbeat",
+        Payload::Heartbeat(Heartbeat {
+            id: node_id.to_string(),
+            ts,
+        }),
+        tx,
+        sessions,
+        id,
+    ).await;
 }
 
 async fn new_connection(
@@ -404,6 +346,8 @@ async fn start_communication(
                 tracing::info!("Node {} is disconnected", id);
                 let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
             });
+        } else {
+            tracing::error!("Node {}:{} is not connected ", host, port);
         }
     } else {
         tracing::error!("Failed to open connection to manager");
@@ -575,6 +519,7 @@ impl ManagerApi for ManagerApiService {
     ) -> Result<Response<Self::OpenConnectionStream>, Status> {
         tracing::info!("Received open_connection request");
 
+        let remote_addr = request.remote_addr();
         let mut input_stream: Streaming<Message> = request.into_inner();
         let (grpc_tx, rx) = tokio::sync::mpsc::channel(32);
 
@@ -613,6 +558,8 @@ impl ManagerApi for ManagerApiService {
                     tracing::info!("Node {} is disconnected", id);
                     let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
                 });
+            } else {
+                tracing::error!("Failed to read Connect message from {:?}", remote_addr);
             }
         });
 
