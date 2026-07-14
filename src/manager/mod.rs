@@ -27,11 +27,12 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let mut sigterm = signal(SignalKind::terminate()).expect("SIGTERM handler");
     let mut sigint = signal(SignalKind::interrupt()).expect("SIGINT handler");
 
-    let (to_gprc, from_manager) = tokio::sync::mpsc::channel(100);
-    let (to_manager, from_grpc) = tokio::sync::mpsc::channel(100);
+    const CHANNEL_BUFFER_SIZE: usize = 100;
+    let (to_gprc, from_manager) = tokio::sync::mpsc::channel(CHANNEL_BUFFER_SIZE);
+    let (to_manager, from_grpc) = tokio::sync::mpsc::channel(CHANNEL_BUFFER_SIZE);
 
     let (host, port) = &config.self_host_port;
-    let me = Arc::new(Me::new(host.to_string(), *port as u32));
+    let me = Arc::new(Me::new(host.clone(), *port as u32));
 
     tracing::info!("Starting manager {:?}", me);
 
