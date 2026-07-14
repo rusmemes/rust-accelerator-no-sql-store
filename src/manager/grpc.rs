@@ -1,4 +1,3 @@
-use crate::common::Either;
 use crate::{
     common::{Me, NodeId},
     manager::{
@@ -42,24 +41,29 @@ const GRPC_CONNECTION_CHANNEL_BUFFER_SIZE: usize = 32;
 /**
 EitherStream is a stream that can send messages to either a Sender<Result<Message, Status>> or a Sender<Message>.
 It is used to send messages to either the gRPC output stream or the gRPC input stream.
-The first Sender is used for gRPC output stream, the second Sender is used for gRPC input stream.
 */
-type EitherStream = Either<Sender<Result<Message, Status>>, Sender<Message>>;
+enum CommunicationStreamEither<A, B> {
+    Input(A),
+    Output(B),
+}
 
-impl EitherStream {
-    async fn send(&self, message: Message) -> Result<(), Either<Status, Message>> {
+type IOStream = CommunicationStreamEither<Sender<Result<Message, Status>>, Sender<Message>>;
+type IOStreamError = CommunicationStreamEither<Status, Message>;
+
+impl IOStream {
+    async fn send(&self, message: Message) -> Result<(), IOStreamError> {
         match self {
-            EitherStream::Left(sender) => {
+            IOStream::Input(sender) => {
                 if let Err(e) = sender.send(Ok(message)).await {
                     let result = e.0;
                     if let Err(status) = result {
-                        return Err(Either::Left(status));
+                        return Err(IOStreamError::Input(status));
                     }
                 }
             }
-            EitherStream::Right(sender) => {
+            IOStream::Output(sender) => {
                 if let Err(e) = sender.send(message).await {
-                    return Err(Either::Right(e.0));
+                    return Err(IOStreamError::Output(e.0));
                 }
             }
         }
@@ -68,8 +72,8 @@ impl EitherStream {
 
     fn is_closed(&self) -> bool {
         match self {
-            EitherStream::Left(sender) => sender.is_closed(),
-            EitherStream::Right(sender) => sender.is_closed(),
+            IOStream::Input(sender) => sender.is_closed(),
+            IOStream::Output(sender) => sender.is_closed(),
         }
     }
 }
@@ -80,7 +84,7 @@ async fn output(
     me: Arc<Me>,
     tx: Sender<NodeProtocol>,
     mut rx: Receiver<NodeProtocol>,
-    sessions: Arc<RwLock<HashMap<NodeId, EitherStream>>>,
+    sessions: Arc<RwLock<HashMap<NodeId, IOStream>>>,
 ) {
     while let Some(message) = rx.recv().await {
         tracing::debug!("output: {:?}", message);
@@ -129,7 +133,7 @@ async fn handle_common(
     event_type: &'static str,
     payload: Payload,
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, EitherStream>>>,
+    sessions: &Arc<RwLock<HashMap<NodeId, IOStream>>>,
     id: NodeId,
 ) {
     if let Some(sender) = sessions.read().await.get(&id) {
@@ -143,7 +147,7 @@ async fn handle_common(
             })
             .await
         {
-            if let Either::Left(status) = e {
+            if let IOStreamError::Input(status) = e {
                 tracing::error!("Error sending {event_type} to {}: status {}", id, status);
             } else {
                 tracing::error!("Error sending {event_type} to {}", id);
@@ -155,7 +159,7 @@ async fn handle_common(
 async fn handle_output_leader(
     me: &Arc<Me>,
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, EitherStream>>>,
+    sessions: &Arc<RwLock<HashMap<NodeId, IOStream>>>,
     id: NodeId,
     epoch: u64,
     ts: u64,
@@ -176,7 +180,7 @@ async fn handle_output_leader(
 
 async fn handle_output_vote_response(
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, EitherStream>>>,
+    sessions: &Arc<RwLock<HashMap<NodeId, IOStream>>>,
     id: NodeId,
     leader_id: NodeId,
     ts: u64,
@@ -195,7 +199,7 @@ async fn handle_output_vote_response(
 
 async fn handle_output_vote_request(
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, EitherStream>>>,
+    sessions: &Arc<RwLock<HashMap<NodeId, IOStream>>>,
     id: NodeId,
     epoch: u64,
     ts: u64,
@@ -214,7 +218,7 @@ async fn handle_output_vote_request(
 
 async fn handle_output_cluster_state(
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, EitherStream>>>,
+    sessions: &Arc<RwLock<HashMap<NodeId, IOStream>>>,
     id: NodeId,
     epoch: u64,
     leader_id: NodeId,
@@ -245,7 +249,7 @@ async fn handle_output_cluster_state(
 
 async fn handle_output_get_cluster_state(
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, EitherStream>>>,
+    sessions: &Arc<RwLock<HashMap<NodeId, IOStream>>>,
     id: NodeId,
 ) {
     handle_common(
@@ -259,7 +263,7 @@ async fn handle_output_get_cluster_state(
 
 async fn handle_output_heartbeat(
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, EitherStream>>>,
+    sessions: &Arc<RwLock<HashMap<NodeId, IOStream>>>,
     id: NodeId,
     node_id: NodeId,
     ts: u64,
@@ -279,7 +283,7 @@ async fn handle_output_heartbeat(
 async fn new_connection(
     me: &Arc<Me>,
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, EitherStream>>>,
+    sessions: &Arc<RwLock<HashMap<NodeId, IOStream>>>,
     host: String,
     port: u32,
 ) {
@@ -310,14 +314,14 @@ async fn new_connection(
 async fn start_communication(
     me: &Arc<Me>,
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, EitherStream>>>,
+    sessions: &Arc<RwLock<HashMap<NodeId, IOStream>>>,
     host: String,
     port: u32,
     grpc_output: Sender<Message>,
     response: Response<Streaming<Message>>,
 ) {
     let mut input_stream = response.into_inner();
-    let sender = Either::Right(grpc_output);
+    let sender = IOStream::Output(grpc_output);
     if sender
         .send(Message {
             payload: Some(Payload::Connect(Connect {
@@ -493,12 +497,12 @@ async fn input(
 
 pub struct ManagerApiService {
     me: Arc<Me>,
-    sessions: Arc<RwLock<HashMap<NodeId, EitherStream>>>,
+    sessions: Arc<RwLock<HashMap<NodeId, IOStream>>>,
     tx: Sender<NodeProtocol>,
 }
 impl ManagerApiService {
     pub fn new((tx, rx): (Sender<NodeProtocol>, Receiver<NodeProtocol>), me: Arc<Me>) -> Self {
-        let sessions: Arc<RwLock<HashMap<NodeId, EitherStream>>> = Default::default();
+        let sessions: Arc<RwLock<HashMap<NodeId, IOStream>>> = Default::default();
         let sessions_clone = sessions.clone();
         let tx_clone = tx.clone();
         let service = Self {
@@ -542,7 +546,7 @@ impl ManagerApi for ManagerApiService {
                 sessions
                     .write()
                     .await
-                    .insert(id.clone(), Either::Left(grpc_tx.clone()));
+                    .insert(id.clone(), IOStream::Input(grpc_tx.clone()));
 
                 tokio::spawn(async move {
                     if grpc_tx
