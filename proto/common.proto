@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package common.v1;
+
+message GetClusterState {}
+
+message Addr {
+  string host = 1;
+  uint32 port = 2;
+}
+
+message ClusterStateItem {
+  string id = 1;
+  Addr addr = 2;
+  uint64 last_heartbeat = 3;
+}
+
+message ClusterState {
+  uint64 epoch = 1;
+  string leader_id = 2;
+  repeated ClusterStateItem items = 3;
+}
