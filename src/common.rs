@@ -6,7 +6,7 @@ pub struct NodeId(String);
 
 impl NodeId {
     pub fn new() -> Self {
-        Self(Uuid::new_v4().to_string())
+        Self(Uuid::now_v7().to_string())
     }
 
     pub fn from_string(id: &str) -> Self {

@@ -1,5 +1,5 @@
 use crate::common::{now_millis, Config, Me, NodeId};
-use crate::manager::domain::{ClusterState, ClusterStateItem, Heartbeat, NodeProtocol};
+use crate::manager::domain::{ClusterState, ClusterStateItem, Heartbeat, NodeProtocol, NodeType};
 use rand::random_range;
 use std::ops::Range;
 use std::{
@@ -19,6 +19,17 @@ struct Node {
     host: String,
     port: u32,
     last_heartbeat: u64,
+    node_type: NodeType,
+}
+
+impl Node {
+    fn is_manager(&self) -> bool {
+        matches!(self.node_type, NodeType::Manager)
+    }
+
+    fn is_worker(&self) -> bool {
+        matches!(self.node_type, NodeType::Worker)
+    }
 }
 
 #[derive(Debug)]
@@ -76,7 +87,9 @@ impl ManagerService {
             let election = self.elections.last_key_value();
             let start_new = if let Some((_, last_election)) = election {
                 match last_election {
-                    Election::Mine { ts, approvers: _ } => ts + random_range(RANDOMIZED_ELECTION_TIMEOUT_INTERVAL) < curr_ts,
+                    Election::Mine { ts, approvers: _ } => {
+                        ts + random_range(RANDOMIZED_ELECTION_TIMEOUT_INTERVAL) < curr_ts
+                    }
                     Election::Other {
                         ts,
                         candidate_id: _,
@@ -100,9 +113,9 @@ impl ManagerService {
                 self.elections.insert(next_epoch, election);
                 state
                     .nodes
-                    .keys()
-                    .filter(|&key| *key != self.me.id)
-                    .for_each(|node_id| {
+                    .iter()
+                    .filter(|(key, value)| *key != &self.me.id && value.is_manager())
+                    .for_each(|(node_id, _)| {
                         output.push(NodeProtocol::VoteRequest {
                             id: node_id.clone(),
                             epoch: next_epoch,
@@ -141,7 +154,10 @@ impl ManagerService {
                         .nodes
                         .get_mut(&state.elected_leader_id.as_ref().unwrap())
                     {
-                        if leader.last_heartbeat + random_range(RANDOMIZED_ELECTION_TIMEOUT_INTERVAL) < now {
+                        if leader.last_heartbeat
+                            + random_range(RANDOMIZED_ELECTION_TIMEOUT_INTERVAL)
+                            < now
+                        {
                             state.elected_leader_id = None;
                         }
                     }
@@ -157,8 +173,22 @@ impl ManagerService {
     fn process(&mut self, msg: NodeProtocol, output: &mut Vec<NodeProtocol>) {
         if let Some(state) = self.state.as_mut() {
             match msg {
-                NodeProtocol::NewConnection { id, host, port } => {
-                    handle_new_connection(output, state, id, host, port, &self.me);
+                NodeProtocol::NewConnection {
+                    id,
+                    host,
+                    port,
+                    node_type,
+                } => {
+                    if let Some(node_type) = node_type {
+                        handle_new_connection(output, state, id, host, port, &self.me, node_type);
+                    } else {
+                        tracing::error!(
+                            "Invalid node type: {:?} for new connection from<->to {}:{}",
+                            node_type,
+                            host,
+                            port
+                        );
+                    }
                 }
                 NodeProtocol::Heartbeat {
                     recipient_id: _,
@@ -219,6 +249,7 @@ impl ManagerService {
                     host: self.me.host.clone(),
                     port: self.me.port,
                     last_heartbeat: now_millis(),
+                    node_type: NodeType::Manager,
                 },
             );
             self.state = Some(State {
@@ -230,6 +261,7 @@ impl ManagerService {
                 id: None,
                 host: manager_host,
                 port: manager_port as u32,
+                node_type: Some(NodeType::Manager),
             }]
         } else {
             let mut nodes = HashMap::new();
@@ -239,6 +271,7 @@ impl ManagerService {
                     host: self.me.host.clone(),
                     port: self.me.port,
                     last_heartbeat: now_millis(),
+                    node_type: NodeType::Manager,
                 },
             );
             self.state = Some(State {
@@ -313,9 +346,9 @@ fn handle_vote_response(
             if approvers.len() == state.nodes.len() - 1
                 && state
                     .nodes
-                    .keys()
-                    .filter(|&node_id| *node_id != me.id)
-                    .all(|node_id| approvers.contains(node_id))
+                    .iter()
+                    .filter(|(node_id, node)| *node_id != &me.id && node.is_manager())
+                    .all(|(node_id, _)| approvers.contains(node_id))
             {
                 state.elected_leader_id = Some(me.id.clone());
                 state.epoch = Some(epoch);
@@ -343,9 +376,9 @@ fn handle_vote_response(
         output.extend(
             state
                 .nodes
-                .keys()
-                .filter(|&key| *key != me.id)
-                .map(|key| NodeProtocol::GetClusterState { id: key.clone() }),
+                .iter()
+                .filter(|(key, node)| *key != &me.id && node.is_manager())
+                .map(|(key, _)| NodeProtocol::GetClusterState { id: key.clone() }),
         );
     }
 }
@@ -414,17 +447,19 @@ fn handle_cluster_state(
             host,
             port,
             last_heartbeat,
+            node_type,
         } in items
         {
             if let Some(node) = state.nodes.get_mut(&id) {
                 if node.last_heartbeat < last_heartbeat {
                     node.last_heartbeat = last_heartbeat;
                 }
-            } else {
+            } else if node_type == NodeType::Manager {
                 output.push(NodeProtocol::NewConnection {
                     id: None,
                     host,
                     port,
+                    node_type: Some(node_type),
                 });
             }
         }
@@ -446,6 +481,7 @@ fn handle_get_cluster_state(output: &mut Vec<NodeProtocol>, state: &mut State, i
                         host: node.host.clone(),
                         port: node.port,
                         last_heartbeat: node.last_heartbeat,
+                        node_type: node.node_type,
                     })
                     .collect(),
             },
@@ -478,9 +514,9 @@ fn handle_heartbeat(
         output.extend(
             state
                 .nodes
-                .keys()
-                .filter(|&key| key != &me.id)
-                .map(|key| NodeProtocol::GetClusterState { id: key.clone() }),
+                .iter()
+                .filter(|(key, node)| *key != &me.id && node.is_manager())
+                .map(|(key, _)| NodeProtocol::GetClusterState { id: key.clone() }),
         );
     }
 }
@@ -492,6 +528,7 @@ fn handle_new_connection(
     host: String,
     port: u32,
     me: &Arc<Me>,
+    node_type: NodeType,
 ) {
     if let Some(id) = id {
         state.nodes.insert(
@@ -500,6 +537,7 @@ fn handle_new_connection(
                 host,
                 port,
                 last_heartbeat: now_millis(),
+                node_type,
             },
         );
         tracing::info!("New connection: {:?}", id);
@@ -589,6 +627,7 @@ mod tests {
             host: me.host.clone(),
             port: me.port,
             last_heartbeat,
+            node_type: NodeType::Manager,
         }
     }
 
@@ -597,6 +636,7 @@ mod tests {
             host: host.to_string(),
             port,
             last_heartbeat,
+            node_type: NodeType::Manager,
         }
     }
 
@@ -616,7 +656,8 @@ mod tests {
             [NodeProtocol::NewConnection {
                 id: _,
                 host,
-                port
+                port,
+                node_type: Some(NodeType::Manager)
             }] if host == "manager.local" && *port == 9000
         ));
 
@@ -661,6 +702,7 @@ mod tests {
                 id: Some(peer_id.clone()),
                 host: "peer.local".to_string(),
                 port: 9001,
+                node_type: Some(NodeType::Manager),
             },
             &mut output,
         );
@@ -691,6 +733,7 @@ mod tests {
                         host: "peer.local".to_string(),
                         port: 9001,
                         last_heartbeat: 120,
+                        node_type: NodeType::Manager,
                     },
                 ),
             ]),
@@ -902,20 +945,22 @@ mod tests {
                     host: me.host.clone(),
                     port: me.port,
                     last_heartbeat: now + 1,
+                    node_type: NodeType::Manager,
                 },
                 ClusterStateItem {
                     id: unknown.clone(),
                     host: "unknown.local".to_string(),
                     port: 9002,
                     last_heartbeat: now + 2,
+                    node_type: NodeType::Manager,
                 },
             ],
         );
 
         assert!(matches!(
             output.as_slice(),
-            [NodeProtocol::NewConnection { id, host, port }]
-                if id.is_none() && host == "unknown.local" && *port == 9002
+            [NodeProtocol::NewConnection { id, host, port, node_type }]
+                if id.is_none() && host == "unknown.local" && *port == 9002 && node_type.as_ref().unwrap() == &NodeType::Manager
         ));
 
         let state = service.state.as_ref().unwrap();
@@ -951,6 +996,7 @@ mod tests {
                 host: me.host.clone(),
                 port: me.port,
                 last_heartbeat: now + 50,
+                node_type: NodeType::Manager,
             }],
         );
 
@@ -1016,6 +1062,7 @@ mod tests {
                         host: "peer.local".to_string(),
                         port: 9001,
                         last_heartbeat: 0,
+                        node_type: NodeType::Manager,
                     },
                 ),
             ]),
@@ -1077,6 +1124,7 @@ mod tests {
                         host: "peer-one.local".to_string(),
                         port: 9001,
                         last_heartbeat: 0,
+                        node_type: NodeType::Manager,
                     },
                 ),
                 (
@@ -1085,6 +1133,7 @@ mod tests {
                         host: "peer-two.local".to_string(),
                         port: 9002,
                         last_heartbeat: 0,
+                        node_type: NodeType::Manager,
                     },
                 ),
             ]),
@@ -1150,6 +1199,7 @@ mod tests {
                     host: "leader.local".to_string(),
                     port: 9001,
                     last_heartbeat: 0,
+                    node_type: NodeType::Manager,
                 },
             )]),
         });
@@ -1183,6 +1233,7 @@ mod tests {
                         host: "peer.local".to_string(),
                         port: 9001,
                         last_heartbeat: now,
+                        node_type: NodeType::Manager,
                     },
                 ),
             ]),
@@ -1194,6 +1245,7 @@ mod tests {
                 id: Some(node_id("33333333-3333-3333-3333-333333333333")),
                 host: "third.local".to_string(),
                 port: 9002,
+                node_type: Some(NodeType::Manager),
             },
             &mut output,
         );
@@ -1219,6 +1271,7 @@ mod tests {
                         host: "peer-one.local".to_string(),
                         port: 9001,
                         last_heartbeat: 0,
+                        node_type: NodeType::Manager,
                     },
                 ),
                 (
@@ -1227,6 +1280,7 @@ mod tests {
                         host: "peer-two.local".to_string(),
                         port: 9002,
                         last_heartbeat: now,
+                        node_type: NodeType::Manager,
                     },
                 ),
             ]),
@@ -1296,6 +1350,7 @@ mod tests {
                         host: "peer-one.local".to_string(),
                         port: 9001,
                         last_heartbeat: now,
+                        node_type: NodeType::Manager,
                     },
                 ),
                 (
@@ -1304,6 +1359,7 @@ mod tests {
                         host: "peer-two.local".to_string(),
                         port: 9002,
                         last_heartbeat: now,
+                        node_type: NodeType::Manager,
                     },
                 ),
             ]),
@@ -1370,6 +1426,7 @@ mod tests {
                         host: "peer.local".to_string(),
                         port: 9001,
                         last_heartbeat: now,
+                        node_type: NodeType::Manager,
                     },
                 ),
             ]),
@@ -1416,6 +1473,7 @@ mod tests {
                         host: "leader.local".to_string(),
                         port: 9001,
                         last_heartbeat: now,
+                        node_type: NodeType::Manager,
                     },
                 ),
             ]),
@@ -1433,12 +1491,14 @@ mod tests {
                     host: me.host.clone(),
                     port: me.port,
                     last_heartbeat: now,
+                    node_type: NodeType::Manager,
                 },
                 ClusterStateItem {
                     id: leader.clone(),
                     host: "leader.local".to_string(),
                     port: 9001,
                     last_heartbeat: now,
+                    node_type: NodeType::Manager,
                 },
             ],
         );
@@ -1478,6 +1538,7 @@ mod tests {
                 host: me.host.clone(),
                 port: me.port,
                 last_heartbeat: now + 1,
+                node_type: NodeType::Manager,
             }],
         );
         assert!(same_epoch_same_leader.is_empty());
@@ -1504,6 +1565,7 @@ mod tests {
                 host: me.host.clone(),
                 port: me.port,
                 last_heartbeat: now + 2,
+                node_type: NodeType::Manager,
             }],
         );
         assert!(conflict.is_empty());
@@ -1538,6 +1600,7 @@ mod tests {
                         host: "leader.local".to_string(),
                         port: 9001,
                         last_heartbeat: now,
+                        node_type: NodeType::Manager,
                     },
                 ),
             ]),
@@ -1620,6 +1683,7 @@ mod tests {
                         host: "leader.local".to_string(),
                         port: 9001,
                         last_heartbeat: now_millis(),
+                        node_type: NodeType::Manager,
                     },
                 ),
             ]),
@@ -1657,6 +1721,7 @@ mod tests {
                         host: "leader.local".to_string(),
                         port: 9001,
                         last_heartbeat: now - 1_000,
+                        node_type: NodeType::Manager,
                     },
                 ),
             ]),
@@ -1685,6 +1750,7 @@ mod tests {
                         host: "peer.local".to_string(),
                         port: 9001,
                         last_heartbeat: now_millis(),
+                        node_type: NodeType::Manager,
                     },
                 ),
             ]),

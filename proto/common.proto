@@ -9,10 +9,16 @@ message Addr {
   uint32 port = 2;
 }
 
+enum ClusterItemType {
+  Manager = 0;
+  Worker = 1;
+}
+
 message ClusterStateItem {
   string id = 1;
   Addr addr = 2;
   uint64 last_heartbeat = 3;
+  ClusterItemType item_type = 4;
 }
 
 message ClusterState {

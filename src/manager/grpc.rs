@@ -3,6 +3,8 @@ use crate::{
     manager::{
         domain,
         domain::NodeProtocol,
+        domain::NodeType,
+        grpc::api::v1::WorkerMessage,
         grpc::{
             api::v1::{
                 manager_api_client::ManagerApiClient, manager_api_server::{ManagerApi, ManagerApiServer}, message::Payload, Connect, ConnectResponse, Heartbeat, Leader,
@@ -11,7 +13,7 @@ use crate::{
                 VoteResponse,
             },
             common::v1::{Addr, ClusterState, ClusterStateItem, GetClusterState},
-        },
+        }
     },
 };
 use std::{collections::HashMap, net::AddrParseError, sync::Arc};
@@ -79,6 +81,7 @@ impl IOStream {
 }
 
 type OpenConnectionStream = ReceiverStream<Result<Message, Status>>;
+type OpenWorkerConnectionStream = ReceiverStream<Result<WorkerMessage, Status>>;
 
 async fn output(
     me: Arc<Me>,
@@ -95,7 +98,7 @@ async fn output(
             } => {
                 handle_output_heartbeat(&tx, &sessions, id, node_id, ts).await;
             }
-            NodeProtocol::NewConnection { id: _, host, port } => {
+            NodeProtocol::NewConnection { id: _, host, port , node_type: _} => {
                 new_connection(&me, &tx, &sessions, host, port).await;
             }
             NodeProtocol::GetClusterState { id } => {
@@ -175,7 +178,8 @@ async fn handle_output_leader(
         tx,
         sessions,
         id,
-    ).await;
+    )
+    .await;
 }
 
 async fn handle_output_vote_response(
@@ -194,7 +198,8 @@ async fn handle_output_vote_response(
         tx,
         sessions,
         id,
-    ).await;
+    )
+    .await;
 }
 
 async fn handle_output_vote_request(
@@ -206,14 +211,12 @@ async fn handle_output_vote_request(
 ) {
     handle_common(
         "VoteRequest",
-        Payload::VoteRequest(VoteRequest {
-            epoch,
-            ts,
-        }),
+        Payload::VoteRequest(VoteRequest { epoch, ts }),
         tx,
         sessions,
         id,
-    ).await;
+    )
+    .await;
 }
 
 async fn handle_output_cluster_state(
@@ -238,13 +241,18 @@ async fn handle_output_cluster_state(
                         port: item.port,
                     }),
                     last_heartbeat: item.last_heartbeat,
+                    item_type: match item.node_type {
+                        NodeType::Manager => 0,
+                        NodeType::Worker => 1
+                    }
                 })
                 .collect(),
         }),
         tx,
         sessions,
         id,
-    ).await;
+    )
+    .await;
 }
 
 async fn handle_output_get_cluster_state(
@@ -258,7 +266,8 @@ async fn handle_output_get_cluster_state(
         tx,
         sessions,
         id,
-    ).await;
+    )
+    .await;
 }
 
 async fn handle_output_heartbeat(
@@ -277,7 +286,8 @@ async fn handle_output_heartbeat(
         tx,
         sessions,
         id,
-    ).await;
+    )
+    .await;
 }
 
 async fn new_connection(
@@ -291,7 +301,8 @@ async fn new_connection(
     match client {
         Ok(mut client) => {
             tracing::debug!("Connecting to manager");
-            let (grpc_output, rx) = tokio::sync::mpsc::channel::<Message>(GRPC_CONNECTION_CHANNEL_BUFFER_SIZE);
+            let (grpc_output, rx) =
+                tokio::sync::mpsc::channel::<Message>(GRPC_CONNECTION_CHANNEL_BUFFER_SIZE);
             let outbound = ReceiverStream::new(rx);
 
             let response = client.open_connection(Request::new(outbound)).await;
@@ -347,7 +358,7 @@ async fn start_communication(
             let tx = tx.clone();
             let me = me.clone();
             tokio::spawn(async move {
-                input(me, input_stream, &id, host, port, tx.clone()).await;
+                input(me, input_stream, &id, host, port, tx.clone(), NodeType::Manager).await;
                 sessions.write().await.remove(&id);
                 tracing::info!("Node {} is disconnected", id);
                 let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
@@ -367,12 +378,14 @@ async fn input(
     host: String,
     port: u32,
     tx: Sender<NodeProtocol>,
+    node_type: NodeType
 ) {
     if tx
         .send(NodeProtocol::NewConnection {
             id: Some(id.clone()),
             host,
             port,
+            node_type: Some(node_type),
         })
         .await
         .is_ok()
@@ -427,6 +440,10 @@ async fn input(
                                                 host,
                                                 port,
                                                 last_heartbeat: grpc.last_heartbeat,
+                                                node_type: match grpc.item_type {
+                                                    1 => NodeType::Worker,
+                                                    _ => NodeType::Manager,
+                                                },
                                             }
                                         })
                                     })
@@ -558,7 +575,7 @@ impl ManagerApi for ManagerApiService {
                         .await
                         .is_ok()
                     {
-                        input(me, input_stream, &id, host, port, tx.clone()).await;
+                        input(me, input_stream, &id, host, port, tx.clone(), NodeType::Manager).await;
                     }
                     sessions.write().await.remove(&id);
                     tracing::info!("Node {} is disconnected", id);
@@ -570,6 +587,15 @@ impl ManagerApi for ManagerApiService {
         });
 
         Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
+    type OpenWorkerConnectionStream = OpenWorkerConnectionStream;
+
+    async fn open_worker_connection(
+        &self,
+        request: Request<Streaming<WorkerMessage>>,
+    ) -> Result<Response<Self::OpenWorkerConnectionStream>, Status> {
+        todo!()
     }
 }
 
