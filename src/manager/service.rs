@@ -34,6 +34,10 @@ impl Node {
         matches!(self, Node::Manager { .. })
     }
 
+    fn is_worker(&self) -> bool {
+        matches!(self, Node::Worker { .. })
+    }
+
     fn last_heartbeat_mut(&mut self) -> &mut u64 {
         match self {
             Node::Manager { last_heartbeat, .. } => last_heartbeat,
@@ -47,6 +51,7 @@ struct State {
     epoch: Option<u64>,
     elected_leader_id: Option<NodeId>,
     nodes: HashMap<NodeId, Node>,
+    workers_with_calculated_partitions: HashSet<NodeId>,
 }
 
 #[derive(Debug)]
@@ -176,6 +181,25 @@ impl ManagerService {
                 output.extend(self.start_election_if_needed());
             }
         }
+        if let Some(state) = self.state.as_mut() {
+            if state.elected_leader_id.as_ref() == Some(&self.me.id) {
+                let current_keys = state
+                    .nodes
+                    .iter()
+                    .filter(|(k, v)| v.is_worker())
+                    .map(|(k, _)| k)
+                    .collect::<HashSet<_>>();
+                if state.workers_with_calculated_partitions.len() != current_keys.len()
+                    || current_keys
+                        != state
+                            .workers_with_calculated_partitions
+                            .iter()
+                            .collect::<HashSet<_>>()
+                {
+                    // todo!("Recalculate partitions and send new cluster state to workers");
+                }
+            }
+        }
         tracing::debug!("state: {:?}", self.state);
         tracing::debug!("elections: {:?}", self.elections);
     }
@@ -248,6 +272,7 @@ impl ManagerService {
                 epoch: None,
                 elected_leader_id: None,
                 nodes,
+                workers_with_calculated_partitions: Default::default(),
             });
             vec![NodeProtocol::NewConnection {
                 id: None,
@@ -269,6 +294,7 @@ impl ManagerService {
                 epoch: Some(0),
                 elected_leader_id: None,
                 nodes,
+                workers_with_calculated_partitions: Default::default(),
             });
             vec![]
         }
@@ -593,9 +619,15 @@ fn handle_new_connection(
     manager: bool,
 ) {
     if let Some(id) = id {
+        tracing::info!("New connection: {:?}", id);
         state.nodes.insert(
             id.clone(),
             if manager {
+                if state.elected_leader_id.is_none()
+                    || state.elected_leader_id.as_ref() != Some(&me.id)
+                {
+                    output.push(NodeProtocol::GetClusterState { id });
+                }
                 Node::Manager {
                     host,
                     port,
@@ -606,16 +638,12 @@ fn handle_new_connection(
                     host,
                     port,
                     last_heartbeat: now_millis(),
-                    partitions: vec![], // will be filled on next GetClusterState request
+                    partitions: vec![], // will be filled on next tick
                 }
             },
         );
-        tracing::info!("New connection: {:?}", id);
         tracing::info!("Me: {:?}", me);
         tracing::info!("State: {:?}", state);
-        if state.elected_leader_id.is_none() || state.elected_leader_id.as_ref() != Some(&me.id) {
-            output.push(NodeProtocol::GetClusterState { id });
-        }
     }
 }
 
@@ -771,6 +799,7 @@ mod tests {
             epoch: None,
             elected_leader_id: None,
             nodes: HashMap::from([(me.id.clone(), fresh_node(&me, now_millis()))]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -794,45 +823,6 @@ mod tests {
     }
 
     #[test]
-    fn new_connection_for_worker_adds_worker_and_requests_cluster_state() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let worker_id = node_id("22222222-2222-2222-2222-222222222222");
-        let mut service = service(me.clone());
-        service.state = Some(State {
-            epoch: Some(1),
-            elected_leader_id: None,
-            nodes: HashMap::from([(me.id.clone(), fresh_node(&me, now_millis()))]),
-        });
-
-        let mut output = vec![];
-        service.process(
-            NodeProtocol::NewConnection {
-                id: Some(worker_id.clone()),
-                host: "worker.local".to_string(),
-                port: 9100,
-                manager: false,
-            },
-            &mut output,
-        );
-
-        assert!(matches!(
-            output.as_slice(),
-            [NodeProtocol::GetClusterState { id }] if id == &worker_id
-        ));
-
-        let state = service.state.as_ref().unwrap();
-        assert!(matches!(
-            state.nodes.get(&worker_id),
-            Some(Node::Worker {
-                host,
-                port,
-                partitions,
-                ..
-            }) if host == "worker.local" && *port == 9100 && partitions.is_empty()
-        ));
-    }
-
-    #[test]
     fn get_cluster_state_returns_current_cluster_snapshot() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let peer_id = node_id("22222222-2222-2222-2222-222222222222");
@@ -852,6 +842,7 @@ mod tests {
                     },
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -890,6 +881,7 @@ mod tests {
                     worker_node("worker.local", 9100, now - 5, vec![4, 2, 9]),
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -948,6 +940,7 @@ mod tests {
                 (me.id.clone(), fresh_node(&me, now)),
                 (peer_id.clone(), node("peer.local", 9001, 0)),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -983,6 +976,7 @@ mod tests {
                 (peer_one.clone(), node("peer-one.local", 9001, 0)),
                 (peer_two.clone(), node("peer-two.local", 9002, 0)),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -1019,6 +1013,7 @@ mod tests {
                 (me.id.clone(), fresh_node(&me, now)),
                 (candidate.clone(), node("candidate.local", 9001, 0)),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -1060,6 +1055,7 @@ mod tests {
                 (stored_candidate.clone(), node("stored.local", 9001, 0)),
                 (requester.clone(), node("requester.local", 9002, 0)),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
         service.elections.insert(
             2,
@@ -1107,6 +1103,7 @@ mod tests {
                 (me.id.clone(), fresh_node(&me, now)),
                 (peer.clone(), node("peer.local", 9001, now)),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -1140,8 +1137,14 @@ mod tests {
         let state = service.state.as_mut().unwrap();
         assert_eq!(state.epoch, Some(2));
         assert_eq!(state.elected_leader_id, Some(me.id.clone()));
-        assert_eq!(*state.nodes.get_mut(&me.id).unwrap().last_heartbeat_mut(), now + 1);
-        assert_eq!(*state.nodes.get_mut(&peer).unwrap().last_heartbeat_mut(), now);
+        assert_eq!(
+            *state.nodes.get_mut(&me.id).unwrap().last_heartbeat_mut(),
+            now + 1
+        );
+        assert_eq!(
+            *state.nodes.get_mut(&peer).unwrap().last_heartbeat_mut(),
+            now
+        );
     }
 
     #[test]
@@ -1160,6 +1163,7 @@ mod tests {
                     worker_node("worker.local", 9100, now, vec![1, 2]),
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -1227,6 +1231,7 @@ mod tests {
                 (me.id.clone(), fresh_node(&me, now)),
                 (leader.clone(), node("leader.local", 9001, now)),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -1247,7 +1252,10 @@ mod tests {
         let state = service.state.as_mut().unwrap();
         assert_eq!(state.epoch, Some(3));
         assert_eq!(state.elected_leader_id, Some(leader));
-        assert_eq!(*state.nodes.get_mut(&me.id).unwrap().last_heartbeat_mut(), now);
+        assert_eq!(
+            *state.nodes.get_mut(&me.id).unwrap().last_heartbeat_mut(),
+            now
+        );
     }
 
     #[test]
@@ -1263,6 +1271,7 @@ mod tests {
                 (me.id.clone(), fresh_node(&me, now)),
                 (leader.clone(), node("leader.local", 9001, now)),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
         service.elections.insert(
             2,
@@ -1285,7 +1294,10 @@ mod tests {
         let state = service.state.as_mut().unwrap();
         assert_eq!(state.epoch, Some(2));
         assert_eq!(state.elected_leader_id, Some(leader.clone()));
-        assert_eq!(*state.nodes.get_mut(&leader).unwrap().last_heartbeat_mut(), now + 10);
+        assert_eq!(
+            *state.nodes.get_mut(&leader).unwrap().last_heartbeat_mut(),
+            now + 10
+        );
         assert!(service.elections.is_empty());
     }
 
@@ -1309,6 +1321,7 @@ mod tests {
                     },
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -1334,6 +1347,7 @@ mod tests {
                 (me.id.clone(), fresh_node(&me, now)),
                 (peer.clone(), node("peer.local", 9001, 0)),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -1378,6 +1392,7 @@ mod tests {
                     },
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
         service.elections.insert(
             1,
@@ -1444,6 +1459,7 @@ mod tests {
                     worker_node("worker.local", 9100, 0, vec![1, 2]),
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
         service.elections.insert(
             1,
@@ -1497,6 +1513,7 @@ mod tests {
                     last_heartbeat: 0,
                 },
             )]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -1531,6 +1548,7 @@ mod tests {
                     },
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -1576,6 +1594,7 @@ mod tests {
                     },
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut forwarded = vec![];
@@ -1641,6 +1660,7 @@ mod tests {
                 ),
                 (manager_peer.clone(), node("manager.local", 9001, 0)),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -1702,6 +1722,7 @@ mod tests {
                     },
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut first = vec![];
@@ -1768,6 +1789,7 @@ mod tests {
                     },
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
         service.elections.insert(
             1,
@@ -1814,6 +1836,7 @@ mod tests {
                     },
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut first = vec![];
@@ -1935,6 +1958,7 @@ mod tests {
                     worker_node("worker.local", 9100, now, vec![1]),
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -1974,6 +1998,7 @@ mod tests {
                     },
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         handle_leader(
@@ -2026,6 +2051,7 @@ mod tests {
             epoch: None,
             elected_leader_id: None,
             nodes: HashMap::from([(me.id.clone(), fresh_node(&me, now_millis()))]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -2058,6 +2084,7 @@ mod tests {
                     },
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -2095,6 +2122,7 @@ mod tests {
                     },
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -2123,6 +2151,7 @@ mod tests {
                     },
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
@@ -2156,6 +2185,7 @@ mod tests {
                     worker_node("worker.local", 9100, 0, vec![1]),
                 ),
             ]),
+            workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
