@@ -2,18 +2,32 @@ use crate::{
     common::{Me, NodeId},
     manager::{
         domain,
+        domain::ClusterNode,
         domain::NodeProtocol,
-        domain::NodeType,
-        grpc::api::v1::WorkerMessage,
         grpc::{
             api::v1::{
-                manager_api_client::ManagerApiClient, manager_api_server::{ManagerApi, ManagerApiServer}, message::Payload, Connect, ConnectResponse, Heartbeat, Leader,
-                Message,
+                manager_api_client::ManagerApiClient,
+                manager_api_server::{ManagerApi, ManagerApiServer},
+                manager_event::Payload,
+                Connect,
+                ConnectResponse,
+                Heartbeat,
+                Leader,
+                ManagerEvent,
                 VoteRequest,
                 VoteResponse,
+                WorkerEvent
             },
-            common::v1::{Addr, ClusterState, ClusterStateItem, GetClusterState},
-        }
+            common::v1::{
+                node,
+                Addr,
+                ClusterState,
+                GetState,
+                Manager,
+                Node,
+                Worker
+            }
+        },
     },
 };
 use std::{collections::HashMap, net::AddrParseError, sync::Arc};
@@ -49,14 +63,15 @@ enum CommunicationStreamEither<A, B> {
     Output(B),
 }
 
-type IOStream = CommunicationStreamEither<Sender<Result<Message, Status>>, Sender<Message>>;
-type IOStreamError = CommunicationStreamEither<Status, Message>;
+type IOStream =
+    CommunicationStreamEither<Sender<Result<ManagerEvent, Status>>, Sender<ManagerEvent>>;
+type IOStreamError = CommunicationStreamEither<Status, ManagerEvent>;
 
 impl IOStream {
-    async fn send(&self, message: Message) -> Result<(), IOStreamError> {
+    async fn send(&self, event: ManagerEvent) -> Result<(), IOStreamError> {
         match self {
             IOStream::Input(sender) => {
-                if let Err(e) = sender.send(Ok(message)).await {
+                if let Err(e) = sender.send(Ok(event)).await {
                     let result = e.0;
                     if let Err(status) = result {
                         return Err(IOStreamError::Input(status));
@@ -64,7 +79,7 @@ impl IOStream {
                 }
             }
             IOStream::Output(sender) => {
-                if let Err(e) = sender.send(message).await {
+                if let Err(e) = sender.send(event).await {
                     return Err(IOStreamError::Output(e.0));
                 }
             }
@@ -80,8 +95,8 @@ impl IOStream {
     }
 }
 
-type OpenConnectionStream = ReceiverStream<Result<Message, Status>>;
-type OpenWorkerConnectionStream = ReceiverStream<Result<WorkerMessage, Status>>;
+type OpenConnectionStream = ReceiverStream<Result<ManagerEvent, Status>>;
+type OpenWorkerConnectionStream = ReceiverStream<Result<WorkerEvent, Status>>;
 
 async fn output(
     me: Arc<Me>,
@@ -98,8 +113,12 @@ async fn output(
             } => {
                 handle_output_heartbeat(&tx, &sessions, id, node_id, ts).await;
             }
-            NodeProtocol::NewConnection { id: _, host, port , node_type: _} => {
-                new_connection(&me, &tx, &sessions, host, port).await;
+            NodeProtocol::NewConnection { id: _, host, port, manager } => {
+                if manager {
+                    new_manager_connection(&me, &tx, &sessions, host, port).await;
+                } else {
+                    tracing::error!("NewConnection is not expected to be received for worker");
+                }
             }
             NodeProtocol::GetClusterState { id } => {
                 handle_output_get_cluster_state(&tx, &sessions, id).await;
@@ -145,7 +164,7 @@ async fn handle_common(
             sessions.write().await.remove(&id);
             let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
         } else if let Err(e) = sender
-            .send(Message {
+            .send(ManagerEvent {
                 payload: Some(payload),
             })
             .await
@@ -225,25 +244,45 @@ async fn handle_output_cluster_state(
     id: NodeId,
     epoch: u64,
     leader_id: NodeId,
-    items: Vec<domain::ClusterStateItem>,
+    items: Vec<ClusterNode>,
 ) {
     handle_common(
         "ClusterState",
         Payload::ClusterState(ClusterState {
             epoch,
             leader_id: leader_id.to_string(),
-            items: items
+            nodes: items
                 .into_iter()
-                .map(|item| ClusterStateItem {
-                    id: item.id.to_string(),
-                    addr: Some(Addr {
-                        host: item.host,
-                        port: item.port,
-                    }),
-                    last_heartbeat: item.last_heartbeat,
-                    item_type: match item.node_type {
-                        NodeType::Manager => 0,
-                        NodeType::Worker => 1
+                .map(|node| match node {
+                    ClusterNode::Manager {
+                        id,
+                        host,
+                        port,
+                        last_heartbeat,
+                    } => {
+                        Node {
+                            payload: Some(node::Payload::Manager(Manager {
+                                id: id.to_string(),
+                                addr: Some(Addr { host, port }),
+                                last_heartbeat,
+                            }))
+                        }
+                    }
+                    ClusterNode::Worker {
+                        id,
+                        host,
+                        port,
+                        last_heartbeat,
+                        partitions,
+                    } => {
+                        Node {
+                            payload: Some(node::Payload::Worker(Worker {
+                                id: id.to_string(),
+                                addr: Some(Addr { host, port }),
+                                last_heartbeat,
+                                partitions: partitions.into_iter().map(|p| p as u32).collect(),
+                            }))
+                        }
                     }
                 })
                 .collect(),
@@ -262,7 +301,7 @@ async fn handle_output_get_cluster_state(
 ) {
     handle_common(
         "GetClusterState",
-        Payload::GetClusterState(GetClusterState {}),
+        Payload::GetClusterState(GetState {}),
         tx,
         sessions,
         id,
@@ -290,7 +329,7 @@ async fn handle_output_heartbeat(
     .await;
 }
 
-async fn new_connection(
+async fn new_manager_connection(
     me: &Arc<Me>,
     tx: &Sender<NodeProtocol>,
     sessions: &Arc<RwLock<HashMap<NodeId, IOStream>>>,
@@ -302,14 +341,14 @@ async fn new_connection(
         Ok(mut client) => {
             tracing::debug!("Connecting to manager");
             let (grpc_output, rx) =
-                tokio::sync::mpsc::channel::<Message>(GRPC_CONNECTION_CHANNEL_BUFFER_SIZE);
+                tokio::sync::mpsc::channel::<ManagerEvent>(GRPC_CONNECTION_CHANNEL_BUFFER_SIZE);
             let outbound = ReceiverStream::new(rx);
 
             let response = client.open_connection(Request::new(outbound)).await;
             match response {
                 Ok(response) => {
                     tracing::debug!("Connected to manager");
-                    start_communication(me, tx, sessions, host, port, grpc_output, response).await;
+                    start_communication_with_manager(me, tx, sessions, host, port, grpc_output, response).await;
                 }
                 Err(e) => {
                     tracing::error!("Failed to open connection to manager: {}", e);
@@ -322,19 +361,19 @@ async fn new_connection(
     }
 }
 
-async fn start_communication(
+async fn start_communication_with_manager(
     me: &Arc<Me>,
     tx: &Sender<NodeProtocol>,
     sessions: &Arc<RwLock<HashMap<NodeId, IOStream>>>,
     host: String,
     port: u32,
-    grpc_output: Sender<Message>,
-    response: Response<Streaming<Message>>,
+    grpc_output: Sender<ManagerEvent>,
+    response: Response<Streaming<ManagerEvent>>,
 ) {
     let mut input_stream = response.into_inner();
     let sender = IOStream::Output(grpc_output);
     if sender
-        .send(Message {
+        .send(ManagerEvent {
             payload: Some(Payload::Connect(Connect {
                 id: me.id.to_string(),
                 addr: Some(Addr {
@@ -346,7 +385,7 @@ async fn start_communication(
         .await
         .is_ok()
     {
-        if let Ok(Some(Message {
+        if let Ok(Some(ManagerEvent {
             payload: Some(Payload::ConnectResponse(ConnectResponse { id })),
         })) = input_stream.message().await
         {
@@ -358,7 +397,7 @@ async fn start_communication(
             let tx = tx.clone();
             let me = me.clone();
             tokio::spawn(async move {
-                input(me, input_stream, &id, host, port, tx.clone(), NodeType::Manager).await;
+                input_from_another_manager(me, input_stream, &id, host, port, tx.clone()).await;
                 sessions.write().await.remove(&id);
                 tracing::info!("Node {} is disconnected", id);
                 let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
@@ -371,27 +410,26 @@ async fn start_communication(
     }
 }
 
-async fn input(
+async fn input_from_another_manager(
     me: Arc<Me>,
-    mut input: Streaming<Message>,
+    mut input: Streaming<ManagerEvent>,
     id: &NodeId,
     host: String,
     port: u32,
     tx: Sender<NodeProtocol>,
-    node_type: NodeType
 ) {
     if tx
         .send(NodeProtocol::NewConnection {
             id: Some(id.clone()),
             host,
             port,
-            node_type: Some(node_type),
+            manager: true,
         })
         .await
         .is_ok()
     {
         tracing::info!("Node with ID {} is connected", id);
-        while let Ok(Some(Message {
+        while let Ok(Some(ManagerEvent {
             payload: Some(payload),
         })) = input.message().await
         {
@@ -411,7 +449,7 @@ async fn input(
                         break;
                     }
                 }
-                Payload::GetClusterState(GetClusterState {}) => {
+                Payload::GetClusterState(GetState {}) => {
                     if let Err(e) = tx
                         .send(NodeProtocol::GetClusterState { id: id.clone() })
                         .await
@@ -423,7 +461,7 @@ async fn input(
                 Payload::ClusterState(ClusterState {
                     epoch,
                     leader_id,
-                    items,
+                    nodes,
                 }) => {
                     if let Err(e) = tx
                         .send(NodeProtocol::ClusterState {
@@ -431,21 +469,32 @@ async fn input(
                             state: domain::ClusterState {
                                 epoch,
                                 leader_id: leader_id.into(),
-                                items: items
+                                items: nodes
                                     .into_iter()
-                                    .filter_map(|grpc| {
-                                        grpc.addr.map(|Addr { host, port }| {
-                                            domain::ClusterStateItem {
-                                                id: grpc.id.into(),
-                                                host,
-                                                port,
-                                                last_heartbeat: grpc.last_heartbeat,
-                                                node_type: match grpc.item_type {
-                                                    1 => NodeType::Worker,
-                                                    _ => NodeType::Manager,
-                                                },
-                                            }
-                                        })
+                                    .filter_map(|grpc| match grpc.payload {
+                                        Some(node::Payload::Manager(Manager {
+                                            id,
+                                            addr: Some(Addr { host, port }),
+                                            last_heartbeat,
+                                        })) => Some(ClusterNode::Manager {
+                                            id: id.into(),
+                                            host,
+                                            port,
+                                            last_heartbeat,
+                                        }),
+                                        Some(node::Payload::Worker(Worker {
+                                            id,
+                                            addr: Some(Addr { host, port }),
+                                            last_heartbeat,
+                                            partitions,
+                                        })) => Some(ClusterNode::Worker {
+                                            id: id.into(),
+                                            host,
+                                            port,
+                                            last_heartbeat,
+                                            partitions: partitions.into_iter().map(|p| p as u16).collect(),
+                                        }),
+                                        _ => None,
                                     })
                                     .collect(),
                             },
@@ -538,12 +587,12 @@ impl ManagerApi for ManagerApiService {
 
     async fn open_connection(
         &self,
-        request: Request<Streaming<Message>>,
+        request: Request<Streaming<ManagerEvent>>,
     ) -> Result<Response<Self::OpenConnectionStream>, Status> {
         tracing::info!("Received open_connection request");
 
         let remote_addr = request.remote_addr();
-        let mut input_stream: Streaming<Message> = request.into_inner();
+        let mut input_stream: Streaming<ManagerEvent> = request.into_inner();
         let (grpc_tx, rx) = tokio::sync::mpsc::channel(GRPC_CONNECTION_CHANNEL_BUFFER_SIZE);
 
         let sessions = self.sessions.clone();
@@ -551,7 +600,7 @@ impl ManagerApi for ManagerApiService {
         let me = self.me.clone();
 
         tokio::spawn(async move {
-            if let Ok(Some(Message {
+            if let Ok(Some(ManagerEvent {
                 payload:
                     Some(Payload::Connect(Connect {
                         id,
@@ -567,7 +616,7 @@ impl ManagerApi for ManagerApiService {
 
                 tokio::spawn(async move {
                     if grpc_tx
-                        .send(Ok(Message {
+                        .send(Ok(ManagerEvent {
                             payload: Some(Payload::ConnectResponse(ConnectResponse {
                                 id: me.id.to_string(),
                             })),
@@ -575,7 +624,7 @@ impl ManagerApi for ManagerApiService {
                         .await
                         .is_ok()
                     {
-                        input(me, input_stream, &id, host, port, tx.clone(), NodeType::Manager).await;
+                        input_from_another_manager(me, input_stream, &id, host, port, tx.clone()).await;
                     }
                     sessions.write().await.remove(&id);
                     tracing::info!("Node {} is disconnected", id);
@@ -593,7 +642,7 @@ impl ManagerApi for ManagerApiService {
 
     async fn open_worker_connection(
         &self,
-        request: Request<Streaming<WorkerMessage>>,
+        request: Request<Streaming<WorkerEvent>>,
     ) -> Result<Response<Self::OpenWorkerConnectionStream>, Status> {
         todo!()
     }

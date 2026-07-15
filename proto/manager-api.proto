@@ -4,8 +4,8 @@ import "common.proto";
 package manager_api.v1;
 
 service ManagerApi {
-  rpc OpenConnection(stream Message) returns (stream Message);
-  rpc OpenWorkerConnection(stream WorkerMessage) returns (stream WorkerMessage);
+  rpc OpenConnection(stream ManagerEvent) returns (stream ManagerEvent);
+  rpc OpenWorkerConnection(stream WorkerEvent) returns (stream WorkerEvent);
 }
 
 message Connect {
@@ -38,26 +38,26 @@ message Leader {
   uint64 ts = 3;
 }
 
-message Message {
+message ManagerEvent {
   oneof payload {
     Connect connect = 1;
-    Heartbeat heartbeat = 2;
-    common.v1.GetClusterState get_cluster_state = 3;
-    common.v1.ClusterState cluster_state = 4;
-    VoteRequest vote_request = 5;
-    VoteResponse vote_response = 6;
-    Leader leader = 7;
-    ConnectResponse connect_response = 8;
+    ConnectResponse connect_response = 2;
+    Heartbeat heartbeat = 3;
+    common.v1.GetState get_cluster_state = 4;
+    common.v1.ClusterState cluster_state = 5;
+    VoteRequest vote_request = 6;
+    VoteResponse vote_response = 7;
+    Leader leader = 8;
   }
 }
 
-message WorkerMessage {
+message WorkerEvent {
   oneof payload {
     Connect connect = 1;
-    Heartbeat heartbeat = 2;
-    common.v1.GetClusterState get_cluster_state = 3;
-    common.v1.ClusterState cluster_state = 4;
-    Leader manager_leader = 5;
-    ConnectResponse connect_response = 6;
+    ConnectResponse connect_response = 2;
+    Heartbeat heartbeat = 3;
+    common.v1.GetState get_cluster_state = 4;
+    common.v1.ClusterState cluster_state = 5;
+    Leader manager_leader = 6;
   }
 }

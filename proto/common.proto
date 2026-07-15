@@ -2,27 +2,35 @@ syntax = "proto3";
 
 package common.v1;
 
-message GetClusterState {}
+message GetState {}
 
 message Addr {
   string host = 1;
   uint32 port = 2;
 }
 
-enum ClusterItemType {
-  Manager = 0;
-  Worker = 1;
-}
-
-message ClusterStateItem {
+message Manager {
   string id = 1;
   Addr addr = 2;
   uint64 last_heartbeat = 3;
-  ClusterItemType item_type = 4;
+}
+
+message Worker {
+  string id = 1;
+  Addr addr = 2;
+  uint64 last_heartbeat = 3;
+  repeated uint32 partitions = 4;
+}
+
+message Node {
+  oneof payload {
+      Manager manager = 1;
+      Worker worker = 2;
+  }
 }
 
 message ClusterState {
   uint64 epoch = 1;
   string leader_id = 2;
-  repeated ClusterStateItem items = 3;
+  repeated Node nodes = 3;
 }

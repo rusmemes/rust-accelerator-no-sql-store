@@ -8,7 +8,7 @@ pub enum NodeProtocol {
         id: Option<NodeId>,
         host: String,
         port: u32,
-        node_type: Option<NodeType>
+        manager: bool,
     },
     /// Forwards a heartbeat for the given node to another recipient.
     Heartbeat {
@@ -59,17 +59,28 @@ pub struct Heartbeat {
 
 /// A single node entry in a cluster snapshot.
 #[derive(Debug)]
-pub struct ClusterStateItem {
-    /// Node identifier.
-    pub id: NodeId,
-    /// Node host name or address.
-    pub host: String,
-    /// Node port.
-    pub port: u32,
-    /// Last known heartbeat timestamp.
-    pub last_heartbeat: u64,
-    
-    pub node_type: NodeType,
+pub enum ClusterNode {
+    Manager {
+        /// Node identifier.
+        id: NodeId,
+        /// Node host name or address.
+        host: String,
+        /// Node port.
+        port: u32,
+        /// Last known heartbeat timestamp.
+        last_heartbeat: u64,
+    },
+    Worker {
+        /// Node identifier.
+        id: NodeId,
+        /// Node host name or address.
+        host: String,
+        /// Node port.
+        port: u32,
+        /// Last known heartbeat timestamp.
+        last_heartbeat: u64,
+        partitions: Vec<u16>,
+    }
 }
 
 /// A complete cluster snapshot shared between manager nodes.
@@ -80,11 +91,5 @@ pub struct ClusterState {
     /// Current elected leader.
     pub leader_id: NodeId,
     /// Known nodes in the cluster.
-    pub items: Vec<ClusterStateItem>,
-}
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub enum NodeType {
-    Manager,
-    Worker,
+    pub items: Vec<ClusterNode>,
 }
