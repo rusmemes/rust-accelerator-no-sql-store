@@ -186,7 +186,7 @@ impl ManagerService {
                 let current_keys = state
                     .nodes
                     .iter()
-                    .filter(|(k, v)| v.is_worker())
+                    .filter(|(_, v)| v.is_worker())
                     .map(|(k, _)| k)
                     .collect::<HashSet<_>>();
                 if state.workers_with_calculated_partitions.len() != current_keys.len()
