@@ -59,7 +59,7 @@ pub enum ClusterNode {
         port: u32,
         last_heartbeat: u64,
         partitions: Vec<u16>,
-    }
+    },
 }
 
 #[derive(Debug)]

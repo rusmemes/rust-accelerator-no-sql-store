@@ -43,7 +43,11 @@ pub struct Me {
 
 impl Me {
     pub fn new(host: String, port: u32) -> Self {
-        Self { id: NodeId::new(), host, port }
+        Self {
+            id: NodeId::new(),
+            host,
+            port,
+        }
     }
 }
 pub struct Config {

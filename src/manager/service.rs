@@ -34,14 +34,10 @@ impl Node {
         matches!(self, Node::Manager { .. })
     }
 
-    fn is_worker(&self) -> bool {
-        matches!(self, Node::Worker { .. })
-    }
-
-    fn last_heartbeat(&self) -> u64 {
+    fn last_heartbeat_mut(&mut self) -> &mut u64 {
         match self {
-            Node::Manager { last_heartbeat, .. } => *last_heartbeat,
-            Node::Worker { last_heartbeat, .. } => *last_heartbeat,
+            Node::Manager { last_heartbeat, .. } => last_heartbeat,
+            Node::Worker { last_heartbeat, .. } => last_heartbeat,
         }
     }
 }
@@ -149,15 +145,19 @@ impl ManagerService {
                 let now = now_millis();
                 if *last_heartbeat + HEARTBEAT_INTERVAL_MS <= now {
                     *last_heartbeat = now;
-                    output.extend(state.nodes.keys().filter(|&key| *key != self.me.id).map(
-                        |key| NodeProtocol::Heartbeat {
-                            recipient_id: key.clone(),
-                            heartbeat: Heartbeat {
-                                id: self.me.id.clone(),
-                                ts: now,
-                            },
-                        },
-                    ));
+                    output.extend(
+                        state
+                            .nodes
+                            .iter()
+                            .filter(|(key, node)| **key != self.me.id && node.is_manager())
+                            .map(|(key, _)| NodeProtocol::Heartbeat {
+                                recipient_id: key.clone(),
+                                heartbeat: Heartbeat {
+                                    id: self.me.id.clone(),
+                                    ts: now,
+                                },
+                            }),
+                    );
                 }
 
                 if state.elected_leader_id.is_some()
@@ -188,18 +188,12 @@ impl ManagerService {
                     host,
                     port,
                     manager,
-                } => {
-                    handle_new_connection(output, state, id, host, port, &self.me, manager);
-                }
+                } => handle_new_connection(output, state, id, host, port, &self.me, manager),
                 NodeProtocol::Heartbeat {
                     heartbeat: Heartbeat { id, ts },
                     ..
-                } => {
-                    handle_heartbeat(output, state, id, ts, &self.me);
-                }
-                NodeProtocol::GetClusterState { id } => {
-                    handle_get_cluster_state(output, state, id);
-                }
+                } => handle_heartbeat(output, state, id, ts, &self.me),
+                NodeProtocol::GetClusterState { id } => handle_get_cluster_state(output, state, id),
                 NodeProtocol::ClusterState {
                     state:
                         ClusterState {
@@ -208,9 +202,7 @@ impl ManagerService {
                             items,
                         },
                     ..
-                } => {
-                    handle_cluster_state(output, state, epoch, leader_id, items);
-                }
+                } => handle_cluster_state(output, state, epoch, leader_id, items),
                 NodeProtocol::VoteRequest { id, epoch, ts } => {
                     tracing::info!("VoteRequest: {:?} {:?}", id, epoch);
                     handle_vote_request(output, state, id, epoch, ts, &mut self.elections);
@@ -305,12 +297,7 @@ fn handle_leader(
 ) {
     if state.epoch < Some(epoch) {
         elections.clear();
-        if let Some(Node::Manager {
-            host: _,
-            port: _,
-            last_heartbeat,
-        }) = state.nodes.get_mut(&id)
-        {
+        if let Some(Node::Manager { last_heartbeat, .. }) = state.nodes.get_mut(&id) {
             *last_heartbeat = ts;
             state.elected_leader_id = Some(id);
             state.epoch = Some(epoch);
@@ -578,23 +565,20 @@ fn handle_heartbeat(
                     .map(|(key, _)| NodeProtocol::GetClusterState { id: key.clone() }),
             );
         }
-        Some(Node::Manager { last_heartbeat, .. }) => {
-            *last_heartbeat = ts;
+        Some(node) => {
+            *node.last_heartbeat_mut() = ts;
             if state.elected_leader_id.as_ref() == Some(&me.id) {
                 output.extend(
                     state
                         .nodes
-                        .keys()
-                        .filter(|&key| key != &id && key != &me.id)
-                        .map(|key| NodeProtocol::Heartbeat {
+                        .iter()
+                        .filter(|(key, node)| *key != &id && *key != &me.id && node.is_manager())
+                        .map(|(key, _)| NodeProtocol::Heartbeat {
                             recipient_id: key.clone(),
                             heartbeat: Heartbeat { id: id.clone(), ts },
                         }),
                 );
             }
-        }
-        Some(Node::Worker { last_heartbeat, .. }) => {
-            *last_heartbeat = ts;
         }
     }
 }
@@ -917,7 +901,12 @@ mod tests {
         );
 
         let cluster_state = match output.as_slice() {
-            [NodeProtocol::ClusterState { recipient_id, state }] => {
+            [
+                NodeProtocol::ClusterState {
+                    recipient_id,
+                    state,
+                },
+            ] => {
                 assert_eq!(recipient_id, &worker_id);
                 state
             }
@@ -1148,11 +1137,11 @@ mod tests {
                 if id.is_none() && host == "unknown.local" && *port == 9002 && *manager
         ));
 
-        let state = service.state.as_ref().unwrap();
+        let state = service.state.as_mut().unwrap();
         assert_eq!(state.epoch, Some(2));
         assert_eq!(state.elected_leader_id, Some(me.id.clone()));
-        assert_eq!(state.nodes.get(&me.id).unwrap().last_heartbeat(), now + 1);
-        assert_eq!(state.nodes.get(&peer).unwrap().last_heartbeat(), now);
+        assert_eq!(*state.nodes.get_mut(&me.id).unwrap().last_heartbeat_mut(), now + 1);
+        assert_eq!(*state.nodes.get_mut(&peer).unwrap().last_heartbeat_mut(), now);
     }
 
     #[test]
@@ -1255,10 +1244,10 @@ mod tests {
         );
 
         assert!(output.is_empty());
-        let state = service.state.as_ref().unwrap();
+        let state = service.state.as_mut().unwrap();
         assert_eq!(state.epoch, Some(3));
         assert_eq!(state.elected_leader_id, Some(leader));
-        assert_eq!(state.nodes.get(&me.id).unwrap().last_heartbeat(), now);
+        assert_eq!(*state.nodes.get_mut(&me.id).unwrap().last_heartbeat_mut(), now);
     }
 
     #[test]
@@ -1293,10 +1282,10 @@ mod tests {
             &mut service.elections,
         );
 
-        let state = service.state.as_ref().unwrap();
+        let state = service.state.as_mut().unwrap();
         assert_eq!(state.epoch, Some(2));
         assert_eq!(state.elected_leader_id, Some(leader.clone()));
-        assert_eq!(state.nodes.get(&leader).unwrap().last_heartbeat(), now + 10);
+        assert_eq!(*state.nodes.get_mut(&leader).unwrap().last_heartbeat_mut(), now + 10);
         assert!(service.elections.is_empty());
     }
 
@@ -1474,11 +1463,22 @@ mod tests {
             &mut output,
         );
 
-        assert_eq!(service.state.as_ref().unwrap().elected_leader_id, Some(me.id.clone()));
+        assert_eq!(
+            service.state.as_ref().unwrap().elected_leader_id,
+            Some(me.id.clone())
+        );
         assert_eq!(service.state.as_ref().unwrap().epoch, Some(1));
         assert_eq!(output.len(), 2);
-        assert!(output.iter().any(|msg| matches!(msg, NodeProtocol::Leader { id, .. } if id == &manager_peer)));
-        assert!(output.iter().any(|msg| matches!(msg, NodeProtocol::Leader { id, .. } if id == &worker_peer)));
+        assert!(
+            output
+                .iter()
+                .any(|msg| matches!(msg, NodeProtocol::Leader { id, .. } if id == &manager_peer))
+        );
+        assert!(
+            output
+                .iter()
+                .any(|msg| matches!(msg, NodeProtocol::Leader { id, .. } if id == &worker_peer))
+        );
     }
 
     #[test]
@@ -1612,14 +1612,14 @@ mod tests {
 
         assert!(not_forwarded.is_empty());
         assert_eq!(
-            service
+            *service
                 .state
-                .as_ref()
+                .as_mut()
                 .unwrap()
                 .nodes
-                .get(&peer_one)
+                .get_mut(&peer_one)
                 .unwrap()
-                .last_heartbeat(),
+                .last_heartbeat_mut(),
             43
         );
     }
@@ -1655,28 +1655,21 @@ mod tests {
             &mut output,
         );
 
-        assert!(output.is_empty());
+        assert!(matches!(
+            output.as_slice(),
+            [NodeProtocol::Heartbeat { recipient_id, heartbeat }]
+                if recipient_id == &manager_peer && heartbeat.id == worker && heartbeat.ts == 44
+        ));
         assert_eq!(
-            service
+            *service
                 .state
-                .as_ref()
+                .as_mut()
                 .unwrap()
                 .nodes
-                .get(&worker)
+                .get_mut(&worker)
                 .unwrap()
-                .last_heartbeat(),
+                .last_heartbeat_mut(),
             44
-        );
-        assert_eq!(
-            service
-                .state
-                .as_ref()
-                .unwrap()
-                .nodes
-                .get(&manager_peer)
-                .unwrap()
-                .last_heartbeat(),
-            0
         );
     }
 
@@ -1847,25 +1840,25 @@ mod tests {
         assert!(first.is_empty());
         assert_eq!(service.state.as_ref().unwrap().epoch, Some(4));
         assert_eq!(
-            service
+            *service
                 .state
-                .as_ref()
+                .as_mut()
                 .unwrap()
                 .nodes
-                .get(&me.id)
+                .get_mut(&me.id)
                 .unwrap()
-                .last_heartbeat(),
+                .last_heartbeat_mut(),
             now
         );
         assert_eq!(
-            service
+            *service
                 .state
-                .as_ref()
+                .as_mut()
                 .unwrap()
                 .nodes
-                .get(&leader)
+                .get_mut(&leader)
                 .unwrap()
-                .last_heartbeat(),
+                .last_heartbeat_mut(),
             now
         );
 
@@ -1884,14 +1877,14 @@ mod tests {
         );
         assert!(same_epoch_same_leader.is_empty());
         assert_eq!(
-            service
+            *service
                 .state
-                .as_ref()
+                .as_mut()
                 .unwrap()
                 .nodes
-                .get(&me.id)
+                .get_mut(&me.id)
                 .unwrap()
-                .last_heartbeat(),
+                .last_heartbeat_mut(),
             now + 1
         );
 
@@ -1911,14 +1904,14 @@ mod tests {
         assert!(conflict.is_empty());
         assert_eq!(service.state.as_ref().unwrap().epoch, Some(4));
         assert_eq!(
-            service
+            *service
                 .state
-                .as_ref()
+                .as_mut()
                 .unwrap()
                 .nodes
-                .get(&me.id)
+                .get_mut(&me.id)
                 .unwrap()
-                .last_heartbeat(),
+                .last_heartbeat_mut(),
             now + 1
         );
     }
@@ -1998,14 +1991,14 @@ mod tests {
             Some(leader.clone())
         );
         assert_eq!(
-            service
+            *service
                 .state
-                .as_ref()
+                .as_mut()
                 .unwrap()
                 .nodes
-                .get(&leader)
+                .get_mut(&leader)
                 .unwrap()
-                .last_heartbeat(),
+                .last_heartbeat_mut(),
             now
         );
 
