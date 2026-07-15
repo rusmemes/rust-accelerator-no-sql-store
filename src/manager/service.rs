@@ -354,8 +354,13 @@ fn handle_vote_response(
     if let Some((epoch, approver)) = approver {
         if let Some(Election::Mine { approvers, .. }) = elections.get_mut(&epoch) {
             approvers.insert(approver);
+            let manager_count = state
+                .nodes
+                .iter()
+                .filter(|(node_id, node)| *node_id != &me.id && node.is_manager())
+                .count();
 
-            if approvers.len() == state.nodes.len() - 1
+            if approvers.len() == manager_count
                 && state
                     .nodes
                     .iter()
@@ -481,9 +486,10 @@ fn handle_cluster_state(
                 }
                 ClusterNode::Worker {
                     id,
+                    host,
+                    port,
                     last_heartbeat,
                     partitions,
-                    ..
                 } => {
                     if let Some(Node::Worker {
                         last_heartbeat: node_last_heartbeat,
@@ -498,6 +504,16 @@ fn handle_cluster_state(
                         node_partitions.extend(partitions);
                         let mut seen = HashSet::new();
                         node_partitions.retain(|x| seen.insert(*x));
+                    } else {
+                        state.nodes.insert(
+                            id,
+                            Node::Worker {
+                                host,
+                                port,
+                                last_heartbeat,
+                                partitions,
+                            },
+                        );
                     }
                 }
             }
@@ -708,6 +724,15 @@ mod tests {
         }
     }
 
+    fn worker_node(host: &str, port: u32, last_heartbeat: u64, partitions: Vec<u16>) -> Node {
+        Node::Worker {
+            host: host.to_string(),
+            port,
+            last_heartbeat,
+            partitions,
+        }
+    }
+
     #[test]
     fn init_with_manager_connection_requests_connection_and_sets_state() {
         let me = me("11111111-1111-1111-1111-111111111111");
@@ -785,6 +810,45 @@ mod tests {
     }
 
     #[test]
+    fn new_connection_for_worker_adds_worker_and_requests_cluster_state() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let worker_id = node_id("22222222-2222-2222-2222-222222222222");
+        let mut service = service(me.clone());
+        service.state = Some(State {
+            epoch: Some(1),
+            elected_leader_id: None,
+            nodes: HashMap::from([(me.id.clone(), fresh_node(&me, now_millis()))]),
+        });
+
+        let mut output = vec![];
+        service.process(
+            NodeProtocol::NewConnection {
+                id: Some(worker_id.clone()),
+                host: "worker.local".to_string(),
+                port: 9100,
+                manager: false,
+            },
+            &mut output,
+        );
+
+        assert!(matches!(
+            output.as_slice(),
+            [NodeProtocol::GetClusterState { id }] if id == &worker_id
+        ));
+
+        let state = service.state.as_ref().unwrap();
+        assert!(matches!(
+            state.nodes.get(&worker_id),
+            Some(Node::Worker {
+                host,
+                port,
+                partitions,
+                ..
+            }) if host == "worker.local" && *port == 9100 && partitions.is_empty()
+        ));
+    }
+
+    #[test]
     fn get_cluster_state_returns_current_cluster_snapshot() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let peer_id = node_id("22222222-2222-2222-2222-222222222222");
@@ -823,6 +887,62 @@ mod tests {
                 && state.epoch == 3
                 && state.leader_id == me.id
                 && state.items.len() == 2
+        ));
+    }
+
+    #[test]
+    fn get_cluster_state_returns_worker_items_with_partitions() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let worker_id = node_id("22222222-2222-2222-2222-222222222222");
+        let mut service = service(me.clone());
+        let now = now_millis();
+        service.state = Some(State {
+            epoch: Some(3),
+            elected_leader_id: Some(me.id.clone()),
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, now)),
+                (
+                    worker_id.clone(),
+                    worker_node("worker.local", 9100, now - 5, vec![4, 2, 9]),
+                ),
+            ]),
+        });
+
+        let mut output = vec![];
+        service.process(
+            NodeProtocol::GetClusterState {
+                id: worker_id.clone(),
+            },
+            &mut output,
+        );
+
+        let cluster_state = match output.as_slice() {
+            [NodeProtocol::ClusterState { recipient_id, state }] => {
+                assert_eq!(recipient_id, &worker_id);
+                state
+            }
+            other => panic!("unexpected output: {:?}", other),
+        };
+
+        let worker_item = cluster_state
+            .items
+            .iter()
+            .find(|item| matches!(item, ClusterNode::Worker { id, .. } if id == &worker_id))
+            .expect("worker node present");
+
+        assert!(matches!(
+            worker_item,
+            ClusterNode::Worker {
+                id,
+                host,
+                port,
+                last_heartbeat,
+                partitions,
+            } if id == &worker_id
+                && host == "worker.local"
+                && *port == 9100
+                && *last_heartbeat == now - 5
+                && partitions == &vec![4, 2, 9]
         ));
     }
 
@@ -1033,6 +1153,76 @@ mod tests {
         assert_eq!(state.elected_leader_id, Some(me.id.clone()));
         assert_eq!(state.nodes.get(&me.id).unwrap().last_heartbeat(), now + 1);
         assert_eq!(state.nodes.get(&peer).unwrap().last_heartbeat(), now);
+    }
+
+    #[test]
+    fn cluster_state_adds_unknown_workers_and_updates_known_ones() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let worker = node_id("22222222-2222-2222-2222-222222222222");
+        let mut service = service(me.clone());
+        let now = now_millis();
+        service.state = Some(State {
+            epoch: Some(1),
+            elected_leader_id: Some(me.id.clone()),
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, now)),
+                (
+                    worker.clone(),
+                    worker_node("worker.local", 9100, now, vec![1, 2]),
+                ),
+            ]),
+        });
+
+        let mut output = vec![];
+        handle_cluster_state(
+            &mut output,
+            service.state.as_mut().unwrap(),
+            2,
+            me.id.clone(),
+            vec![
+                ClusterNode::Worker {
+                    id: worker.clone(),
+                    host: "worker.local".to_string(),
+                    port: 9100,
+                    last_heartbeat: now + 10,
+                    partitions: vec![2, 3, 3, 4],
+                },
+                ClusterNode::Worker {
+                    id: node_id("33333333-3333-3333-3333-333333333333"),
+                    host: "worker-two.local".to_string(),
+                    port: 9101,
+                    last_heartbeat: now + 20,
+                    partitions: vec![7, 8],
+                },
+            ],
+        );
+
+        assert!(output.is_empty());
+        let state = service.state.as_ref().unwrap();
+        assert!(matches!(
+            state.nodes.get(&worker),
+            Some(Node::Worker {
+                host,
+                port,
+                last_heartbeat,
+                partitions,
+            }) if host == "worker.local"
+                && *port == 9100
+                && *last_heartbeat == now + 10
+                && partitions == &vec![1, 2, 3, 4]
+        ));
+        assert!(matches!(
+            state.nodes.get(&node_id("33333333-3333-3333-3333-333333333333")),
+            Some(Node::Worker {
+                host,
+                port,
+                last_heartbeat,
+                partitions,
+            }) if host == "worker-two.local"
+                && *port == 9101
+                && *last_heartbeat == now + 20
+                && partitions == &vec![7, 8]
+        ));
     }
 
     #[test]
@@ -1248,6 +1438,50 @@ mod tests {
     }
 
     #[test]
+    fn vote_responses_complete_election_with_worker_nodes_present() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let manager_peer = node_id("22222222-2222-2222-2222-222222222222");
+        let worker_peer = node_id("33333333-3333-3333-3333-333333333333");
+        let mut service = service(me.clone());
+        let now = now_millis();
+        service.state = Some(State {
+            epoch: Some(0),
+            elected_leader_id: Some(me.id.clone()),
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, now)),
+                (manager_peer.clone(), node("manager.local", 9001, 0)),
+                (
+                    worker_peer.clone(),
+                    worker_node("worker.local", 9100, 0, vec![1, 2]),
+                ),
+            ]),
+        });
+        service.elections.insert(
+            1,
+            Election::Mine {
+                ts: 100,
+                approvers: HashSet::new(),
+            },
+        );
+
+        let mut output = vec![];
+        service.process(
+            NodeProtocol::VoteResponse {
+                id: manager_peer.clone(),
+                leader_id: me.id.clone(),
+                ts: 100,
+            },
+            &mut output,
+        );
+
+        assert_eq!(service.state.as_ref().unwrap().elected_leader_id, Some(me.id.clone()));
+        assert_eq!(service.state.as_ref().unwrap().epoch, Some(1));
+        assert_eq!(output.len(), 2);
+        assert!(output.iter().any(|msg| matches!(msg, NodeProtocol::Leader { id, .. } if id == &manager_peer)));
+        assert!(output.iter().any(|msg| matches!(msg, NodeProtocol::Leader { id, .. } if id == &worker_peer)));
+    }
+
+    #[test]
     fn node_disconnected_clears_current_leader() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let leader = node_id("22222222-2222-2222-2222-222222222222");
@@ -1387,6 +1621,62 @@ mod tests {
                 .unwrap()
                 .last_heartbeat(),
             43
+        );
+    }
+
+    #[test]
+    fn heartbeat_from_worker_updates_worker_without_forwarding() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let worker = node_id("22222222-2222-2222-2222-222222222222");
+        let manager_peer = node_id("33333333-3333-3333-3333-333333333333");
+        let mut service = service(me.clone());
+        service.state = Some(State {
+            epoch: Some(1),
+            elected_leader_id: Some(me.id.clone()),
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, now_millis())),
+                (
+                    worker.clone(),
+                    worker_node("worker.local", 9100, 12, vec![1, 2]),
+                ),
+                (manager_peer.clone(), node("manager.local", 9001, 0)),
+            ]),
+        });
+
+        let mut output = vec![];
+        service.process(
+            NodeProtocol::Heartbeat {
+                recipient_id: me.id.clone(),
+                heartbeat: Heartbeat {
+                    id: worker.clone(),
+                    ts: 44,
+                },
+            },
+            &mut output,
+        );
+
+        assert!(output.is_empty());
+        assert_eq!(
+            service
+                .state
+                .as_ref()
+                .unwrap()
+                .nodes
+                .get(&worker)
+                .unwrap()
+                .last_heartbeat(),
+            44
+        );
+        assert_eq!(
+            service
+                .state
+                .as_ref()
+                .unwrap()
+                .nodes
+                .get(&manager_peer)
+                .unwrap()
+                .last_heartbeat(),
+            0
         );
     }
 
@@ -1634,6 +1924,44 @@ mod tests {
     }
 
     #[test]
+    fn leader_with_unknown_id_requests_cluster_state_from_manager_peers_only() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let manager_peer = node_id("22222222-2222-2222-2222-222222222222");
+        let worker_peer = node_id("33333333-3333-3333-3333-333333333333");
+        let leader = node_id("44444444-4444-4444-4444-444444444444");
+        let now = now_millis();
+        let mut service = service(me.clone());
+        service.state = Some(State {
+            epoch: Some(1),
+            elected_leader_id: None,
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, now)),
+                (manager_peer.clone(), node("manager.local", 9001, now)),
+                (
+                    worker_peer.clone(),
+                    worker_node("worker.local", 9100, now, vec![1]),
+                ),
+            ]),
+        });
+
+        let mut output = vec![];
+        handle_leader(
+            &mut output,
+            service.state.as_mut().unwrap(),
+            leader,
+            2,
+            now + 10,
+            &me,
+            &mut service.elections,
+        );
+
+        assert!(matches!(
+            output.as_slice(),
+            [NodeProtocol::GetClusterState { id }] if id == &manager_peer
+        ));
+    }
+
+    #[test]
     fn leader_messages_only_move_state_forward() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let leader = node_id("22222222-2222-2222-2222-222222222222");
@@ -1810,6 +2138,39 @@ mod tests {
         assert!(matches!(
             output.as_slice(),
             [NodeProtocol::VoteRequest { id, epoch, .. }] if id == &peer && *epoch == 8
+        ));
+        assert!(matches!(
+            service.elections.last_key_value(),
+            Some((8, Election::Mine { .. }))
+        ));
+    }
+
+    #[test]
+    fn tick_starts_a_new_election_only_for_manager_peers() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let manager_peer = node_id("22222222-2222-2222-2222-222222222222");
+        let worker_peer = node_id("33333333-3333-3333-3333-333333333333");
+        let mut service = service(me.clone());
+        let future = now_millis() + 10_000;
+        service.state = Some(State {
+            epoch: Some(7),
+            elected_leader_id: None,
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, future)),
+                (manager_peer.clone(), node("manager.local", 9001, 0)),
+                (
+                    worker_peer.clone(),
+                    worker_node("worker.local", 9100, 0, vec![1]),
+                ),
+            ]),
+        });
+
+        let mut output = vec![];
+        service.tick(&mut output);
+
+        assert!(matches!(
+            output.as_slice(),
+            [NodeProtocol::VoteRequest { id, epoch, .. }] if id == &manager_peer && *epoch == 8
         ));
         assert!(matches!(
             service.elections.last_key_value(),
