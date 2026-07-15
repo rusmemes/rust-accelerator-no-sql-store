@@ -95,110 +95,11 @@ impl ManagerService {
         }
     }
 
-    fn start_election_if_needed(&mut self) -> Vec<NodeProtocol> {
-        let mut output = vec![];
-        if let Some(state) = self.state.as_mut()
-            && state.elected_leader_id.is_none()
-            && state.nodes.len() > 1
-            && let Some(epoch) = state.epoch
-        {
-            let curr_ts = now_millis();
-            let election = self.elections.last_key_value();
-            let start_new = if let Some((_, last_election)) = election {
-                match last_election {
-                    Election::Mine { ts, .. } => ts + get_random_number() < curr_ts,
-                    Election::Other { ts, .. } => ts + get_random_number() < curr_ts,
-                }
-            } else {
-                true
-            };
-
-            if start_new {
-                let next_epoch = election
-                    .map(|(last_epoch, _)| max(*last_epoch + 1, epoch + 1))
-                    .unwrap_or_else(|| epoch + 1);
-
-                let election = Election::Mine {
-                    ts: curr_ts,
-                    approvers: HashSet::new(),
-                };
-
-                self.elections.clear();
-                self.elections.insert(next_epoch, election);
-                state
-                    .nodes
-                    .iter()
-                    .filter(|(key, value)| *key != &self.me.id && value.is_manager())
-                    .for_each(|(node_id, _)| {
-                        output.push(NodeProtocol::VoteRequest {
-                            id: node_id.clone(),
-                            epoch: next_epoch,
-                            ts: curr_ts,
-                        });
-                    });
-
-                tracing::info!("New election started: {:?}", self.elections);
-            }
-        }
-
-        output
-    }
-
     fn tick(&mut self, output: &mut Vec<NodeProtocol>) {
         if let Some(state) = self.state.as_mut() {
-            if let Some(Node::Manager { last_heartbeat, .. }) = state.nodes.get_mut(&self.me.id) {
-                let now = now_millis();
-                if *last_heartbeat + HEARTBEAT_INTERVAL_MS <= now {
-                    *last_heartbeat = now;
-                    output.extend(
-                        state
-                            .nodes
-                            .iter()
-                            .filter(|(key, node)| **key != self.me.id && node.is_manager())
-                            .map(|(key, _)| NodeProtocol::Heartbeat {
-                                recipient_id: key.clone(),
-                                heartbeat: Heartbeat {
-                                    id: self.me.id.clone(),
-                                    ts: now,
-                                },
-                            }),
-                    );
-                }
-
-                if state.elected_leader_id.is_some()
-                    && state.elected_leader_id.as_ref() != Some(&self.me.id)
-                {
-                    if let Some(Node::Manager { last_heartbeat, .. }) = state
-                        .nodes
-                        .get_mut(&state.elected_leader_id.as_ref().unwrap())
-                    {
-                        if *last_heartbeat + get_random_number() < now {
-                            state.elected_leader_id = None;
-                        }
-                    }
-                }
-
-                output.extend(self.start_election_if_needed());
-            }
-        }
-        if let Some(state) = self.state.as_mut() {
-            if state.elected_leader_id.as_ref() == Some(&self.me.id) {
-                let current_keys = state
-                    .nodes
-                    .iter()
-                    .filter(|(_, v)| v.is_worker())
-                    .map(|(k, _)| k)
-                    .collect::<HashSet<_>>();
-                if state.workers_with_calculated_partitions.len() != current_keys.len()
-                    || current_keys
-                        != state
-                            .workers_with_calculated_partitions
-                            .iter()
-                            .collect::<HashSet<_>>()
-                {
-                    // todo!("Recalculate partitions and send new cluster state to workers");
-                }
-            }
+            heartbeats(state, output, &self.me);
+            start_election_if_needed(state, &mut self.elections, &self.me, output);
+            worker_partitions(state, output, &self.me);
         }
         tracing::debug!("state: {:?}", self.state);
         tracing::debug!("elections: {:?}", self.elections);
@@ -301,7 +202,111 @@ impl ManagerService {
     }
 }
 
-fn handle_node_disconnected(state: &mut State, id: NodeId, me: &Arc<Me>) {
+fn worker_partitions(state: &mut State, _output: &mut Vec<NodeProtocol>, me: &Me) {
+    if state.elected_leader_id.as_ref() == Some(&me.id) {
+        let current_keys = state
+            .nodes
+            .iter()
+            .filter(|(_, v)| v.is_worker())
+            .map(|(k, _)| k)
+            .collect::<HashSet<_>>();
+
+        if state.workers_with_calculated_partitions.len() != current_keys.len()
+            || current_keys
+                != state
+                    .workers_with_calculated_partitions
+                    .iter()
+                    .collect::<HashSet<_>>()
+        {
+            // todo!("Recalculate partitions and send new cluster state to workers");
+        }
+    }
+}
+
+fn heartbeats(state: &mut State, output: &mut Vec<NodeProtocol>, me: &Me) {
+    if let Some(Node::Manager { last_heartbeat, .. }) = state.nodes.get_mut(&me.id) {
+        let now = now_millis();
+        if *last_heartbeat + HEARTBEAT_INTERVAL_MS <= now {
+            *last_heartbeat = now;
+            output.extend(
+                state
+                    .nodes
+                    .iter()
+                    .filter(|(key, node)| **key != me.id && node.is_manager())
+                    .map(|(key, _)| NodeProtocol::Heartbeat {
+                        recipient_id: key.clone(),
+                        heartbeat: Heartbeat {
+                            id: me.id.clone(),
+                            ts: now,
+                        },
+                    }),
+            );
+        }
+
+        if state.elected_leader_id.is_some() && state.elected_leader_id.as_ref() != Some(&me.id) {
+            if let Some(Node::Manager { last_heartbeat, .. }) = state
+                .nodes
+                .get_mut(&state.elected_leader_id.as_ref().unwrap())
+            {
+                if *last_heartbeat + get_random_number() < now {
+                    state.elected_leader_id = None;
+                }
+            }
+        }
+    }
+}
+
+fn start_election_if_needed(
+    state: &mut State,
+    elections: &mut BTreeMap<u64, Election>,
+    me: &Me,
+    output: &mut Vec<NodeProtocol>,
+) {
+    if state.elected_leader_id.is_none()
+        && state.nodes.len() > 1
+        && let Some(epoch) = state.epoch
+    {
+        let curr_ts = now_millis();
+        let election = elections.last_key_value();
+        let start_new = if let Some((_, last_election)) = election {
+            match last_election {
+                Election::Mine { ts, .. } => ts + get_random_number() < curr_ts,
+                Election::Other { ts, .. } => ts + get_random_number() < curr_ts,
+            }
+        } else {
+            true
+        };
+
+        if start_new {
+            let next_epoch = election
+                .map(|(last_epoch, _)| max(*last_epoch + 1, epoch + 1))
+                .unwrap_or_else(|| epoch + 1);
+
+            let election = Election::Mine {
+                ts: curr_ts,
+                approvers: HashSet::new(),
+            };
+
+            elections.clear();
+            elections.insert(next_epoch, election);
+            state
+                .nodes
+                .iter()
+                .filter(|(key, value)| *key != &me.id && value.is_manager())
+                .for_each(|(node_id, _)| {
+                    output.push(NodeProtocol::VoteRequest {
+                        id: node_id.clone(),
+                        epoch: next_epoch,
+                        ts: curr_ts,
+                    });
+                });
+
+            tracing::info!("New election started: {:?}", elections);
+        }
+    }
+}
+
+fn handle_node_disconnected(state: &mut State, id: NodeId, me: &Me) {
     if let Some(_) = state.nodes.remove(&id) {
         tracing::info!("Node disconnected: {:?}", id);
         if Some(id) == state.elected_leader_id {
@@ -318,7 +323,7 @@ fn handle_leader(
     id: NodeId,
     epoch: u64,
     ts: u64,
-    me: &Arc<Me>,
+    me: &Me,
     elections: &mut BTreeMap<u64, Election>,
 ) {
     if state.epoch < Some(epoch) {
@@ -347,7 +352,7 @@ fn handle_vote_response(
     id: NodeId,
     leader_id: NodeId,
     ts: u64,
-    me: &Arc<Me>,
+    me: &Me,
     elections: &mut BTreeMap<u64, Election>,
 ) {
     let approver = if let Some((
@@ -579,7 +584,7 @@ fn handle_heartbeat(
     state: &mut State,
     id: NodeId,
     ts: u64,
-    me: &Arc<Me>,
+    me: &Me,
 ) {
     match state.nodes.get_mut(&id) {
         None => {
@@ -615,7 +620,7 @@ fn handle_new_connection(
     id: Option<NodeId>,
     host: String,
     port: u32,
-    me: &Arc<Me>,
+    me: &Me,
     manager: bool,
 ) {
     if let Some(id) = id {
