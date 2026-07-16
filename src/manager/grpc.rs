@@ -1,4 +1,5 @@
 use crate::manager::grpc::api::v1::worker_event;
+use crate::manager::grpc::common::v1::Config;
 use crate::{
     common::{Me, NodeId},
     manager::{
@@ -146,6 +147,7 @@ async fn output(
     mut rx: Receiver<NodeProtocol>,
     manager_sessions: Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
     worker_sessions: Arc<RwLock<HashMap<NodeId, WorkerIOStream>>>,
+    config: Arc<RwLock<crate::common::Config>>,
 ) {
     while let Some(message) = rx.recv().await {
         tracing::debug!("output: {:?}", message);
@@ -162,8 +164,23 @@ async fn output(
                 port,
                 manager,
             } => {
+                let guard = config.read().await;
+                let (partitions_amount, replication_factor) = guard
+                    .partitions_amount
+                    .zip(guard.replication_factor)
+                    .expect("Partitions and replication factor should be defined");
+                drop(guard);
                 if manager {
-                    new_manager_connection(&me, &tx, &manager_sessions, host, port).await;
+                    new_manager_connection(
+                        &me,
+                        &tx,
+                        &manager_sessions,
+                        host,
+                        port,
+                        partitions_amount,
+                        replication_factor,
+                    )
+                    .await;
                 } else {
                     tracing::error!("NewConnection is not expected to be received for worker");
                 }
@@ -178,6 +195,7 @@ async fn output(
                         epoch,
                         leader_id,
                         items,
+                        config,
                     },
             } => {
                 handle_output_cluster_state(
@@ -188,6 +206,7 @@ async fn output(
                     epoch,
                     leader_id,
                     items,
+                    config,
                 )
                 .await;
             }
@@ -326,6 +345,7 @@ async fn handle_output_cluster_state(
     epoch: u64,
     leader_id: NodeId,
     items: Vec<ClusterNode>,
+    config: Option<domain::Config>,
 ) {
     let state = || ClusterState {
         epoch,
@@ -361,6 +381,12 @@ async fn handle_output_cluster_state(
                 },
             })
             .collect(),
+        config: config.map(|config| {
+            Config {
+                partitions_amount: config.partitions_amount as u32,
+                replication_factor: config.replication_factor as u32,
+            }
+        }),
     };
 
     let is_worker = worker_sessions.read().await.contains_key(&id);
@@ -434,6 +460,8 @@ async fn new_manager_connection(
     sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
     host: String,
     port: u32,
+    partitions_amount: usize,
+    replication_factor: usize,
 ) {
     let client = ManagerApiClient::connect(format!("http://{host}:{port}")).await;
     match client {
@@ -455,6 +483,8 @@ async fn new_manager_connection(
                         port,
                         grpc_output,
                         response,
+                        partitions_amount,
+                        replication_factor,
                     )
                     .await;
                 }
@@ -477,6 +507,8 @@ async fn start_communication_with_manager(
     port: u32,
     grpc_output: Sender<ManagerEvent>,
     response: Response<Streaming<ManagerEvent>>,
+    partitions_amount: usize,
+    replication_factor: usize,
 ) {
     let mut input_stream = response.into_inner();
     let sender = ManagerIOStream::Output(grpc_output);
@@ -487,6 +519,10 @@ async fn start_communication_with_manager(
                 addr: Some(Addr {
                     host: me.host.clone(),
                     port: me.port,
+                }),
+                config: Some(Config {
+                    partitions_amount: partitions_amount as u32,
+                    replication_factor: replication_factor as u32,
                 }),
             })),
         })
@@ -644,11 +680,13 @@ async fn input_from_manager(
                     epoch,
                     leader_id,
                     nodes,
+                    ..
                 }) => {
                     if let Err(e) = tx
                         .send(NodeProtocol::ClusterState {
                             recipient_id: me.id.clone(),
                             state: domain::ClusterState {
+                                config: None,
                                 epoch,
                                 leader_id: leader_id.into(),
                                 items: nodes
@@ -751,9 +789,14 @@ pub struct ManagerApiService {
     manager_sessions: Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
     worker_sessions: Arc<RwLock<HashMap<NodeId, WorkerIOStream>>>,
     tx: Sender<NodeProtocol>,
+    config: Arc<RwLock<crate::common::Config>>,
 }
 impl ManagerApiService {
-    pub fn new((tx, rx): (Sender<NodeProtocol>, Receiver<NodeProtocol>), me: Arc<Me>) -> Self {
+    pub fn new(
+        (tx, rx): (Sender<NodeProtocol>, Receiver<NodeProtocol>),
+        me: Arc<Me>,
+        config: Arc<RwLock<crate::common::Config>>,
+    ) -> Self {
         let manager_sessions: Arc<RwLock<HashMap<NodeId, ManagerIOStream>>> = Default::default();
         let manager_sessions_clone = manager_sessions.clone();
         let worker_sessions: Arc<RwLock<HashMap<NodeId, WorkerIOStream>>> = Default::default();
@@ -764,6 +807,7 @@ impl ManagerApiService {
             manager_sessions,
             worker_sessions,
             tx,
+            config: config.clone(),
         };
         tokio::spawn(output(
             me.clone(),
@@ -771,6 +815,7 @@ impl ManagerApiService {
             rx,
             manager_sessions_clone,
             worker_sessions_clone,
+            config,
         ));
         service
     }
@@ -793,6 +838,7 @@ impl ManagerApi for ManagerApiService {
         let manager_sessions = self.manager_sessions.clone();
         let tx = self.tx.clone();
         let me = self.me.clone();
+        let config = self.config.clone();
 
         tokio::spawn(async move {
             if let Ok(Some(ManagerEvent {
@@ -800,9 +846,19 @@ impl ManagerApi for ManagerApiService {
                     Some(Payload::Connect(Connect {
                         id,
                         addr: Some(Addr { host, port }),
+                        config:
+                            Some(Config {
+                                partitions_amount,
+                                replication_factor,
+                            }),
                     })),
             })) = input_stream.message().await
             {
+                let mut guard = config.write().await;
+                guard.partitions_amount = Some(partitions_amount as usize);
+                guard.replication_factor = Some(replication_factor as usize);
+                drop(guard);
+
                 let id: NodeId = id.into();
                 manager_sessions
                     .write()
@@ -858,6 +914,7 @@ impl ManagerApi for ManagerApiService {
                     Some(worker_event::Payload::Connect(Connect {
                         id,
                         addr: Some(Addr { host, port }),
+                        ..
                     })),
             })) = input_stream.message().await
             {
@@ -903,17 +960,21 @@ pub enum GrpcServerError {
 }
 
 pub async fn start_server(
+    config: Arc<RwLock<crate::common::Config>>,
     me: Arc<Me>,
     channel: (Sender<NodeProtocol>, Receiver<NodeProtocol>),
-    port: u16,
     cancellation_token: CancellationToken,
 ) -> Result<(), GrpcServerError> {
-    let grpc_address = format!("127.0.0.1:{}", port).as_str().parse()?;
+    let guard = config.read().await;
+    let grpc_address = format!("127.0.0.1:{}", guard.grpc_port).as_str().parse()?;
+    drop(guard);
 
     tracing::info!("GRPC Server is starting at {}", grpc_address);
 
     Server::builder()
-        .add_service(ManagerApiServer::new(ManagerApiService::new(channel, me)))
+        .add_service(ManagerApiServer::new(ManagerApiService::new(
+            channel, me, config,
+        )))
         .serve_with_shutdown(grpc_address, cancellation_token.cancelled())
         .await
         .map_err(|error| GrpcServerError::Transport(error))?;
@@ -927,7 +988,9 @@ pub async fn start_server(
 mod tests {
     use super::*;
     use crate::manager::grpc::api::v1::worker_event;
+    use std::sync::Arc;
     use std::time::Duration;
+    use tokio::sync::RwLock;
     use tokio::time::timeout;
     use tokio_stream::wrappers::ReceiverStream;
 
@@ -1022,7 +1085,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn output_routes_cluster_state_to_worker_session() {
+    async fn output_routes_cluster_state_to_worker_session_includes_config() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let worker_id = node_id("22222222-2222-2222-2222-222222222222");
         let manager_node_id = node_id("33333333-3333-3333-3333-333333333333");
@@ -1054,6 +1117,10 @@ mod tests {
                     partitions: vec![1, 2],
                 },
             ],
+            Some(domain::Config {
+                partitions_amount: 12,
+                replication_factor: 4,
+            }),
         )
         .await;
 
@@ -1065,6 +1132,8 @@ mod tests {
 
         assert_eq!(cluster_state.epoch, 5);
         assert_eq!(cluster_state.leader_id, manager_node_id.to_string());
+        assert_eq!(cluster_state.config.as_ref().map(|c| c.partitions_amount), Some(12));
+        assert_eq!(cluster_state.config.as_ref().map(|c| c.replication_factor), Some(4));
         assert_eq!(cluster_state.nodes.len(), 2);
         assert!(cluster_state.nodes.iter().any(|node| matches!(
             &node.payload,
@@ -1095,7 +1164,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn output_routes_cluster_state_to_manager_session() {
+    async fn output_routes_cluster_state_to_manager_session_includes_config() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let manager_id = node_id("22222222-2222-2222-2222-222222222222");
         let (tx, _rx) = tokio::sync::mpsc::channel(4);
@@ -1117,6 +1186,10 @@ mod tests {
                 port: 7000,
                 last_heartbeat: 77,
             }],
+            Some(domain::Config {
+                partitions_amount: 8,
+                replication_factor: 2,
+            }),
         )
         .await;
 
@@ -1128,6 +1201,8 @@ mod tests {
 
         assert_eq!(cluster_state.epoch, 2);
         assert_eq!(cluster_state.leader_id, me.id.to_string());
+        assert_eq!(cluster_state.config.as_ref().map(|c| c.partitions_amount), Some(8));
+        assert_eq!(cluster_state.config.as_ref().map(|c| c.replication_factor), Some(2));
         assert_eq!(cluster_state.nodes.len(), 1);
         assert!(matches!(
             cluster_state.nodes.as_slice(),

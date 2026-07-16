@@ -45,7 +45,7 @@ pub struct Heartbeat {
     pub ts: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ClusterNode {
     Manager {
         id: NodeId,
@@ -62,9 +62,16 @@ pub enum ClusterNode {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClusterState {
     pub epoch: u64,
     pub leader_id: NodeId,
     pub items: Vec<ClusterNode>,
+    pub config: Option<Config>
+}
+
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub partitions_amount: usize,
+    pub replication_factor: usize,
 }

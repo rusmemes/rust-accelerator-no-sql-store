@@ -1,6 +1,7 @@
 use crate::common::{now_millis, Config, Me, NodeId};
 use crate::manager::domain::{ClusterNode, ClusterState, Heartbeat, NodeProtocol};
 use rand::random_range;
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::{
     cmp::max,
@@ -8,6 +9,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use tokio::sync::RwLock;
 use tokio::{
     select,
     sync::mpsc::{Receiver, Sender},
@@ -51,7 +53,7 @@ struct State {
     epoch: Option<u64>,
     elected_leader_id: Option<NodeId>,
     nodes: HashMap<NodeId, Node>,
-    workers_with_calculated_partitions: HashSet<NodeId>,
+    workers_with_calculated_partitions: BTreeSet<NodeId>,
 }
 
 #[derive(Debug)]
@@ -84,28 +86,40 @@ struct ManagerService {
     me: Arc<Me>,
     state: Option<State>,
     elections: BTreeMap<u64, Election>,
+    config: Arc<RwLock<Config>>,
 }
 
 impl ManagerService {
-    pub fn new(me: Arc<Me>) -> Self {
+    pub fn new(me: Arc<Me>, config: Arc<RwLock<Config>>) -> Self {
         Self {
             me,
             state: Default::default(),
             elections: Default::default(),
+            config,
         }
     }
 
-    fn tick(&mut self, output: &mut Vec<NodeProtocol>) {
+    async fn tick(&mut self, output: &mut Vec<NodeProtocol>) {
         if let Some(state) = self.state.as_mut() {
             heartbeats(state, output, &self.me);
             start_election_if_needed(state, &mut self.elections, &self.me, output);
-            worker_partitions(state, output, &self.me);
+            let config = self.config.read().await;
+            let partitions_amount = config.partitions_amount.expect("required and has default");
+            let replication_factor = config.replication_factor.expect("required and has default");
+            drop(config);
+            worker_partitions(
+                state,
+                output,
+                &self.me,
+                partitions_amount,
+                replication_factor,
+            );
         }
         tracing::debug!("state: {:?}", self.state);
         tracing::debug!("elections: {:?}", self.elections);
     }
 
-    fn process(&mut self, msg: NodeProtocol, output: &mut Vec<NodeProtocol>) {
+    async fn process(&mut self, msg: NodeProtocol, output: &mut Vec<NodeProtocol>) {
         if let Some(state) = self.state.as_mut() {
             match msg {
                 NodeProtocol::NewConnection {
@@ -118,13 +132,16 @@ impl ManagerService {
                     heartbeat: Heartbeat { id, ts },
                     ..
                 } => handle_heartbeat(output, state, id, ts, &self.me),
-                NodeProtocol::GetClusterState { id } => handle_get_cluster_state(output, state, id),
+                NodeProtocol::GetClusterState { id } => {
+                    handle_get_cluster_state(output, state, id, &self.config).await
+                }
                 NodeProtocol::ClusterState {
                     state:
                         ClusterState {
                             epoch,
                             leader_id,
                             items,
+                            config: _,
                         },
                     ..
                 } => handle_cluster_state(output, state, epoch, leader_id, items),
@@ -153,13 +170,15 @@ impl ManagerService {
             }
         }
 
-        self.tick(output)
+        self.tick(output).await
     }
 
-    fn get_init_messages(&mut self, config: Config) -> Vec<NodeProtocol> {
+    async fn get_init_messages(&mut self) -> Vec<NodeProtocol> {
         if self.state.is_some() {
             vec![]
-        } else if let Some((manager_host, manager_port)) = config.manager_host_port {
+        } else if let Some((manager_host, manager_port)) =
+            &self.config.read().await.manager_host_port
+        {
             let mut nodes = HashMap::new();
             nodes.insert(
                 self.me.id.clone(),
@@ -177,8 +196,8 @@ impl ManagerService {
             });
             vec![NodeProtocol::NewConnection {
                 id: None,
-                host: manager_host,
-                port: manager_port as u32,
+                host: manager_host.clone(),
+                port: *manager_port as u32,
                 manager: true,
             }]
         } else {
@@ -202,23 +221,87 @@ impl ManagerService {
     }
 }
 
-fn worker_partitions(state: &mut State, _output: &mut Vec<NodeProtocol>, me: &Me) {
+fn worker_partitions(
+    state: &mut State,
+    output: &mut Vec<NodeProtocol>,
+    me: &Me,
+    partitions_amount: usize,
+    replication_factor: usize,
+) {
     if state.elected_leader_id.as_ref() == Some(&me.id) {
         let current_keys = state
             .nodes
             .iter()
             .filter(|(_, v)| v.is_worker())
             .map(|(k, _)| k)
-            .collect::<HashSet<_>>();
+            .collect::<BTreeSet<_>>();
 
         if state.workers_with_calculated_partitions.len() != current_keys.len()
             || current_keys
                 != state
                     .workers_with_calculated_partitions
                     .iter()
-                    .collect::<HashSet<_>>()
+                    .collect::<BTreeSet<_>>()
         {
-            // todo!("Recalculate partitions and send new cluster state to workers");
+            let vec = current_keys
+                .into_iter()
+                .map(|it| it.clone())
+                .collect::<Vec<_>>();
+
+            for partition in 0..partitions_amount {
+                let id = vec.get(partition % vec.len()).unwrap();
+                let node = state.nodes.get_mut(id).unwrap();
+                if let Node::Worker { partitions, .. } = node {
+                    let p = partition as u16;
+                    if !partitions.contains(&p) {
+                        partitions.push(p);
+                    }
+                }
+            }
+
+            let items: Vec<ClusterNode> = state
+                .nodes
+                .iter()
+                .filter_map(|(id, node)| match node {
+                    Node::Manager { .. } => None,
+                    Node::Worker {
+                        host,
+                        port,
+                        last_heartbeat,
+                        partitions,
+                    } => Some(ClusterNode::Worker {
+                        id: id.clone(),
+                        host: host.clone(),
+                        port: *port,
+                        last_heartbeat: *last_heartbeat,
+                        partitions: partitions.clone(),
+                    }),
+                })
+                .collect();
+
+            let cluster_state = ClusterState {
+                config: Some(crate::manager::domain::Config {
+                    partitions_amount,
+                    replication_factor,
+                }),
+                epoch: state
+                    .epoch
+                    .expect("present as elected leader id is also present"),
+                leader_id: state
+                    .elected_leader_id
+                    .clone()
+                    .expect("existing checked above"),
+                items: items.clone(),
+            };
+
+            state.workers_with_calculated_partitions = vec.into_iter().collect();
+
+            for id in state.nodes.keys().filter(|&key| *key != me.id) {
+                output.push(NodeProtocol::ClusterState {
+                    recipient_id: id.clone(),
+                    state: cluster_state.clone(),
+                });
+            }
         }
     }
 }
@@ -466,7 +549,7 @@ fn handle_cluster_state(
     leader_id: NodeId,
     items: Vec<ClusterNode>,
 ) {
-    let accept_items: bool = if state.epoch.is_none() || state.epoch < Some(epoch) {
+    let accept: bool = if state.epoch.is_none() || state.epoch < Some(epoch) {
         state.epoch = Some(epoch);
         state.elected_leader_id = Some(leader_id);
         true
@@ -476,7 +559,7 @@ fn handle_cluster_state(
         false
     };
 
-    if accept_items {
+    if accept {
         for item in items {
             match item {
                 ClusterNode::Manager {
@@ -519,9 +602,7 @@ fn handle_cluster_state(
                             *node_last_heartbeat = last_heartbeat;
                         }
 
-                        node_partitions.extend(partitions);
-                        let mut seen = HashSet::new();
-                        node_partitions.retain(|x| seen.insert(*x));
+                        *node_partitions = partitions;
                     } else {
                         state.nodes.insert(
                             id,
@@ -539,11 +620,25 @@ fn handle_cluster_state(
     }
 }
 
-fn handle_get_cluster_state(output: &mut Vec<NodeProtocol>, state: &mut State, id: NodeId) {
+async fn handle_get_cluster_state(
+    output: &mut Vec<NodeProtocol>,
+    state: &mut State,
+    id: NodeId,
+    config: &RwLock<Config>,
+) {
     if let Some((epoch, leader_id)) = state.epoch.zip(state.elected_leader_id.clone()) {
+        let guard = config.read().await;
+        let (pa, rf) = guard
+            .partitions_amount
+            .zip(guard.replication_factor)
+            .expect("Partitions and replication factor must be set");
         output.push(NodeProtocol::ClusterState {
             recipient_id: id.clone(),
             state: ClusterState {
+                config: Some(crate::manager::domain::Config {
+                    partitions_amount: pa,
+                    replication_factor: rf,
+                }),
                 epoch,
                 leader_id,
                 items: state
@@ -659,12 +754,12 @@ fn handle_new_connection(
 /// heartbeat and election checks.
 pub async fn start_service(
     me: Arc<Me>,
-    config: Config,
+    config: Arc<RwLock<Config>>,
     (tx, mut rx): (Sender<NodeProtocol>, Receiver<NodeProtocol>),
     cancellation_token: CancellationToken,
 ) {
-    let mut service = ManagerService::new(me);
-    for msg in service.get_init_messages(config) {
+    let mut service = ManagerService::new(me, config);
+    for msg in service.get_init_messages().await {
         if let Err(e) = tx.send(msg).await {
             tracing::error!("Error sending response: {}", e);
             return;
@@ -684,7 +779,7 @@ pub async fn start_service(
             node_protocol = rx.recv() => {
                 if let Some(message) = node_protocol {
                     tracing::debug!("input: {:?}", message);
-                    service.process(message, &mut output);
+                    service.process(message, &mut output).await;
                     for msg in output.drain(..) {
                         if let Err(e) = tx.send(msg).await {
                             tracing::error!("Error sending response: {}", e);
@@ -693,7 +788,7 @@ pub async fn start_service(
                 }
             }
             _ = ticker.tick() => {
-                service.tick(&mut output);
+                service.tick(&mut output).await;
                 for msg in output.drain(..) {
                     if let Err(e) = tx.send(msg).await {
                         tracing::error!("Error sending response: {}", e);
@@ -707,7 +802,9 @@ pub async fn start_service(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
+    use tokio::sync::RwLock;
 
     fn node_id(id: &str) -> NodeId {
         NodeId::from_string(id)
@@ -721,8 +818,19 @@ mod tests {
         })
     }
 
-    fn service(me: Arc<Me>) -> ManagerService {
-        ManagerService::new(me)
+    fn shared_config(manager_host_port: Option<(String, u16)>) -> Arc<RwLock<Config>> {
+        Arc::new(RwLock::new(Config {
+            grpc_port: 8080,
+            self_host_port: ("127.0.0.1".to_string(), 7000),
+            manager_host_port,
+            partitions_amount: Some(6),
+            replication_factor: Some(3),
+        }))
+    }
+
+    fn service(me: Arc<Me>) -> (ManagerService, Arc<RwLock<Config>>) {
+        let config = shared_config(Some(("manager.local".to_string(), 9000)));
+        (ManagerService::new(me, config.clone()), config)
     }
 
     fn fresh_node(me: &Me, last_heartbeat: u64) -> Node {
@@ -750,16 +858,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn init_with_manager_connection_requests_connection_and_sets_state() {
+    #[tokio::test]
+    async fn init_with_manager_connection_requests_connection_and_sets_state() {
         let me = me("11111111-1111-1111-1111-111111111111");
-        let mut service = service(me.clone());
+        let (mut service, _config) = service(me.clone());
 
-        let output = service.get_init_messages(Config {
-            grpc_port: 8080,
-            self_host_port: ("127.0.0.1".to_string(), 7000),
-            manager_host_port: Some(("manager.local".to_string(), 9000)),
-        });
+        let output = service.get_init_messages().await;
 
         assert!(matches!(
             output.as_slice(),
@@ -777,15 +881,13 @@ mod tests {
         assert!(state.nodes.contains_key(&me.id));
     }
 
-    #[test]
-    fn init_without_manager_starts_as_epoch_zero() {
-        let mut service = service(me("11111111-1111-1111-1111-111111111111"));
+    #[tokio::test]
+    async fn init_without_manager_starts_as_epoch_zero() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let (mut service, config) = service(me.clone());
+        config.write().await.manager_host_port = None;
 
-        let output = service.get_init_messages(Config {
-            grpc_port: 8080,
-            self_host_port: ("127.0.0.1".to_string(), 7000),
-            manager_host_port: None,
-        });
+        let output = service.get_init_messages().await;
 
         assert!(output.is_empty());
 
@@ -795,11 +897,11 @@ mod tests {
         assert_eq!(state.nodes.len(), 1);
     }
 
-    #[test]
-    fn new_connection_adds_node_and_requests_cluster_state() {
+    #[tokio::test]
+    async fn new_connection_adds_node_and_requests_cluster_state() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let peer_id = node_id("22222222-2222-2222-2222-222222222222");
-        let mut service = service(me.clone());
+        let (mut service, _config) = service(me.clone());
         service.state = Some(State {
             epoch: None,
             elected_leader_id: None,
@@ -808,15 +910,17 @@ mod tests {
         });
 
         let mut output = vec![];
-        service.process(
-            NodeProtocol::NewConnection {
-                id: Some(peer_id.clone()),
-                host: "peer.local".to_string(),
-                port: 9001,
-                manager: true,
-            },
-            &mut output,
-        );
+        service
+            .process(
+                NodeProtocol::NewConnection {
+                    id: Some(peer_id.clone()),
+                    host: "peer.local".to_string(),
+                    port: 9001,
+                    manager: true,
+                },
+                &mut output,
+            )
+            .await;
 
         assert!(matches!(
             output.as_slice(),
@@ -827,11 +931,16 @@ mod tests {
         assert!(state.nodes.contains_key(&peer_id));
     }
 
-    #[test]
-    fn get_cluster_state_returns_current_cluster_snapshot() {
+    #[tokio::test]
+    async fn get_cluster_state_returns_current_cluster_snapshot() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let peer_id = node_id("22222222-2222-2222-2222-222222222222");
-        let mut service = service(me.clone());
+        let (mut service, config) = service(me.clone());
+        {
+            let mut guard = config.write().await;
+            guard.partitions_amount = Some(12);
+            guard.replication_factor = Some(4);
+        }
         let now = now_millis();
         service.state = Some(State {
             epoch: Some(3),
@@ -851,30 +960,39 @@ mod tests {
         });
 
         let mut output = vec![];
-        service.process(
-            NodeProtocol::GetClusterState {
-                id: peer_id.clone(),
-            },
-            &mut output,
-        );
+        service
+            .process(
+                NodeProtocol::GetClusterState {
+                    id: peer_id.clone(),
+                },
+                &mut output,
+            )
+            .await;
 
-        assert!(matches!(
-            output.as_slice(),
+        let cluster_state = match output.as_slice() {
             [NodeProtocol::ClusterState {
                 recipient_id,
+                state,
+            }] => {
+                assert_eq!(recipient_id, &peer_id);
                 state
-            }] if recipient_id == &peer_id
-                && state.epoch == 3
-                && state.leader_id == me.id
-                && state.items.len() == 2
-        ));
+            }
+            other => panic!("unexpected output: {:?}", other),
+        };
+
+        assert_eq!(cluster_state.epoch, 3);
+        assert_eq!(cluster_state.leader_id, me.id);
+        let config = cluster_state.config.clone().unwrap();
+        assert_eq!(config.partitions_amount, 12);
+        assert_eq!(config.replication_factor, 4);
+        assert_eq!(cluster_state.items.len(), 2);
     }
 
-    #[test]
-    fn get_cluster_state_returns_worker_items_with_partitions() {
+    #[tokio::test]
+    async fn get_cluster_state_returns_worker_items_with_partitions() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let worker_id = node_id("22222222-2222-2222-2222-222222222222");
-        let mut service = service(me.clone());
+        let (mut service, config) = service(me.clone());
         let now = now_millis();
         service.state = Some(State {
             epoch: Some(3),
@@ -890,20 +1008,19 @@ mod tests {
         });
 
         let mut output = vec![];
-        service.process(
-            NodeProtocol::GetClusterState {
-                id: worker_id.clone(),
-            },
+        handle_get_cluster_state(
             &mut output,
-        );
+            service.state.as_mut().unwrap(),
+            worker_id.clone(),
+            config.as_ref(),
+        )
+            .await;
 
         let cluster_state = match output.as_slice() {
-            [
-                NodeProtocol::ClusterState {
-                    recipient_id,
-                    state,
-                },
-            ] => {
+            [NodeProtocol::ClusterState {
+                recipient_id,
+                state,
+            }] => {
                 assert_eq!(recipient_id, &worker_id);
                 state
             }
@@ -930,13 +1047,15 @@ mod tests {
                 && *last_heartbeat == now - 5
                 && partitions == &vec![4, 2, 9]
         ));
+        assert_eq!(cluster_state.config.clone().unwrap().partitions_amount, 6);
+        assert_eq!(cluster_state.config.clone().unwrap().replication_factor, 3);
     }
 
-    #[test]
-    fn heartbeat_from_unknown_node_requests_cluster_state_from_peers() {
+    #[tokio::test]
+    async fn heartbeat_from_unknown_node_requests_cluster_state_from_peers() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let peer_id = node_id("22222222-2222-2222-2222-222222222222");
-        let mut service = service(me.clone());
+        let (mut service, _config) = service(me.clone());
         let now = now_millis();
         service.state = Some(State {
             epoch: Some(1),
@@ -949,16 +1068,18 @@ mod tests {
         });
 
         let mut output = vec![];
-        service.process(
-            NodeProtocol::Heartbeat {
-                recipient_id: me.id.clone(),
-                heartbeat: Heartbeat {
-                    id: node_id("33333333-3333-3333-3333-333333333333"),
-                    ts: 42,
+        service
+            .process(
+                NodeProtocol::Heartbeat {
+                    recipient_id: me.id.clone(),
+                    heartbeat: Heartbeat {
+                        id: node_id("33333333-3333-3333-3333-333333333333"),
+                        ts: 42,
+                    },
                 },
-            },
-            &mut output,
-        );
+                &mut output,
+            )
+            .await;
 
         assert!(matches!(
             output.as_slice(),
@@ -966,12 +1087,12 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn heartbeat_from_known_node_is_forwarded_when_me_is_leader() {
+    #[tokio::test]
+    async fn heartbeat_from_known_peer_is_forwarded_only_when_we_are_leader() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let peer_one = node_id("22222222-2222-2222-2222-222222222222");
         let peer_two = node_id("33333333-3333-3333-3333-333333333333");
-        let mut service = service(me.clone());
+        let (mut service, _config) = service(me.clone());
         let now = now_millis();
         service.state = Some(State {
             epoch: Some(1),
@@ -984,122 +1105,374 @@ mod tests {
             workers_with_calculated_partitions: Default::default(),
         });
 
-        let mut output = vec![];
-        service.process(
-            NodeProtocol::Heartbeat {
-                recipient_id: me.id.clone(),
-                heartbeat: Heartbeat {
-                    id: peer_one.clone(),
-                    ts: 42,
-                },
-            },
-            &mut output,
+        let mut forwarded = vec![];
+        handle_heartbeat(
+            &mut forwarded,
+            service.state.as_mut().unwrap(),
+            peer_one.clone(),
+            42,
+            &me,
         );
 
         assert!(matches!(
-            output.as_slice(),
+            forwarded.as_slice(),
             [NodeProtocol::Heartbeat { recipient_id, heartbeat }]
                 if recipient_id == &peer_two
                     && heartbeat.id == peer_one
                     && heartbeat.ts == 42
         ));
+
+        service.state.as_mut().unwrap().elected_leader_id = Some(peer_two.clone());
+
+        let mut not_forwarded = vec![];
+        handle_heartbeat(
+            &mut not_forwarded,
+            service.state.as_mut().unwrap(),
+            peer_one.clone(),
+            43,
+            &me,
+        );
+
+        assert!(not_forwarded.is_empty());
+        assert_eq!(
+            *service
+                .state
+                .as_mut()
+                .unwrap()
+                .nodes
+                .get_mut(&peer_one)
+                .unwrap()
+                .last_heartbeat_mut(),
+            43
+        );
     }
 
-    #[test]
-    fn vote_request_starts_new_election_and_remembers_candidate() {
+    #[tokio::test]
+    async fn heartbeat_from_worker_updates_worker_without_forwarding() {
         let me = me("11111111-1111-1111-1111-111111111111");
-        let candidate = node_id("22222222-2222-2222-2222-222222222222");
-        let mut service = service(me.clone());
-        let now = now_millis();
+        let worker = node_id("22222222-2222-2222-2222-222222222222");
+        let manager_peer = node_id("33333333-3333-3333-3333-333333333333");
+        let (mut service, _config) = service(me.clone());
         service.state = Some(State {
             epoch: Some(1),
             elected_leader_id: Some(me.id.clone()),
             nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, now)),
-                (candidate.clone(), node("candidate.local", 9001, 0)),
+                (me.id.clone(), fresh_node(&me, now_millis())),
+                (
+                    worker.clone(),
+                    worker_node("worker.local", 9100, 12, vec![1, 2]),
+                ),
+                (manager_peer.clone(), node("manager.local", 9001, 0)),
             ]),
             workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
-        service.process(
-            NodeProtocol::VoteRequest {
-                id: candidate.clone(),
-                epoch: 2,
-                ts: 100,
-            },
+        handle_heartbeat(
             &mut output,
+            service.state.as_mut().unwrap(),
+            worker.clone(),
+            44,
+            &me,
         );
 
         assert!(matches!(
             output.as_slice(),
-            [NodeProtocol::VoteResponse { id, leader_id, ts }]
-                if id == &candidate && leader_id == &candidate && *ts == 100
+            [NodeProtocol::Heartbeat { recipient_id, heartbeat }]
+                if recipient_id == &manager_peer && heartbeat.id == worker && heartbeat.ts == 44
         ));
-        assert!(matches!(
-            service.elections.get(&2),
-            Some(Election::Other {
-                ts: 100,
-                candidate_id
-            }) if candidate_id == &candidate
-        ));
+        assert_eq!(
+            *service
+                .state
+                .as_mut()
+                .unwrap()
+                .nodes
+                .get_mut(&worker)
+                .unwrap()
+                .last_heartbeat_mut(),
+            44
+        );
     }
 
-    #[test]
-    fn vote_request_reuses_existing_candidate_for_same_epoch() {
+    #[tokio::test]
+    async fn vote_request_adds_new_election_reuses_candidate_and_ignores_stale_epochs() {
         let me = me("11111111-1111-1111-1111-111111111111");
-        let stored_candidate = node_id("22222222-2222-2222-2222-222222222222");
-        let requester = node_id("33333333-3333-3333-3333-333333333333");
-        let mut service = service(me.clone());
+        let peer_one = node_id("22222222-2222-2222-2222-222222222222");
+        let peer_two = node_id("33333333-3333-3333-3333-333333333333");
+        let (mut service, _config) = service(me.clone());
+        let now = now_millis();
+        service.state = Some(State {
+            epoch: Some(0),
+            elected_leader_id: Some(me.id.clone()),
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, now)),
+                (
+                    peer_one.clone(),
+                    Node::Manager {
+                        host: "peer-one.local".to_string(),
+                        port: 9001,
+                        last_heartbeat: now,
+                    },
+                ),
+                (
+                    peer_two.clone(),
+                    Node::Manager {
+                        host: "peer-two.local".to_string(),
+                        port: 9002,
+                        last_heartbeat: now,
+                    },
+                ),
+            ]),
+            workers_with_calculated_partitions: Default::default(),
+        });
+
+        let mut first = vec![];
+        service
+            .process(
+                NodeProtocol::VoteRequest {
+                    id: peer_one.clone(),
+                    epoch: 1,
+                    ts: 100,
+                },
+                &mut first,
+            )
+            .await;
+        assert!(matches!(
+            first.as_slice(),
+            [NodeProtocol::VoteResponse { id, leader_id, ts }]
+                if id == &peer_one && leader_id == &peer_one && *ts == 100
+        ));
+
+        let mut second = vec![];
+        service
+            .process(
+                NodeProtocol::VoteRequest {
+                    id: peer_two.clone(),
+                    epoch: 1,
+                    ts: 200,
+                },
+                &mut second,
+            )
+            .await;
+
+        assert!(matches!(
+            second.as_slice(),
+            [NodeProtocol::VoteResponse { id, leader_id, ts }]
+                if id == &peer_two && leader_id == &peer_one && *ts == 100
+        ));
+
+        let mut stale = vec![];
+        service
+            .process(
+                NodeProtocol::VoteRequest {
+                    id: peer_two.clone(),
+                    epoch: 0,
+                    ts: 300,
+                },
+                &mut stale,
+            )
+            .await;
+        assert!(stale.is_empty());
+    }
+
+    #[tokio::test]
+    async fn vote_response_for_unknown_leader_requests_cluster_state() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let peer = node_id("22222222-2222-2222-2222-222222222222");
+        let unknown_leader = node_id("33333333-3333-3333-3333-333333333333");
+        let (mut service, _config) = service(me.clone());
         let now = now_millis();
         service.state = Some(State {
             epoch: Some(1),
             elected_leader_id: Some(me.id.clone()),
             nodes: HashMap::from([
                 (me.id.clone(), fresh_node(&me, now)),
-                (stored_candidate.clone(), node("stored.local", 9001, 0)),
-                (requester.clone(), node("requester.local", 9002, 0)),
+                (
+                    peer.clone(),
+                    Node::Manager {
+                        host: "peer.local".to_string(),
+                        port: 9001,
+                        last_heartbeat: now,
+                    },
+                ),
             ]),
             workers_with_calculated_partitions: Default::default(),
         });
         service.elections.insert(
-            2,
-            Election::Other {
+            1,
+            Election::Mine {
                 ts: 100,
-                candidate_id: stored_candidate.clone(),
+                approvers: HashSet::new(),
             },
         );
 
         let mut output = vec![];
-        service.process(
-            NodeProtocol::VoteRequest {
-                id: requester.clone(),
-                epoch: 2,
-                ts: 200,
-            },
+        handle_vote_response(
             &mut output,
+            service.state.as_mut().unwrap(),
+            peer.clone(),
+            unknown_leader,
+            100,
+            &me,
+            &mut service.elections,
         );
 
         assert!(matches!(
             output.as_slice(),
-            [NodeProtocol::VoteResponse { id, leader_id, ts }]
-                if id == &requester && leader_id == &stored_candidate && *ts == 100
-        ));
-        assert!(matches!(
-            service.elections.get(&2),
-            Some(Election::Other {
-                ts: 100,
-                candidate_id
-            }) if candidate_id == &stored_candidate
+            [NodeProtocol::GetClusterState { id }] if id == &peer
         ));
     }
 
-    #[test]
-    fn cluster_state_updates_known_nodes_and_requests_unknown_ones() {
+    #[tokio::test]
+    async fn vote_responses_elect_self_and_broadcast_leader() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let peer_one = node_id("22222222-2222-2222-2222-222222222222");
+        let peer_two = node_id("33333333-3333-3333-3333-333333333333");
+        let (mut service, _config) = service(me.clone());
+        let now = now_millis();
+        service.state = Some(State {
+            epoch: Some(0),
+            elected_leader_id: Some(me.id.clone()),
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, now)),
+                (
+                    peer_one.clone(),
+                    Node::Manager {
+                        host: "peer-one.local".to_string(),
+                        port: 9001,
+                        last_heartbeat: 0,
+                    },
+                ),
+                (
+                    peer_two.clone(),
+                    Node::Manager {
+                        host: "peer-two.local".to_string(),
+                        port: 9002,
+                        last_heartbeat: 0,
+                    },
+                ),
+            ]),
+            workers_with_calculated_partitions: Default::default(),
+        });
+        service.elections.insert(
+            1,
+            Election::Mine {
+                ts: 100,
+                approvers: HashSet::new(),
+            },
+        );
+
+        let mut first = vec![];
+        handle_vote_response(
+            &mut first,
+            service.state.as_mut().unwrap(),
+            peer_one.clone(),
+            me.id.clone(),
+            100,
+            &me,
+            &mut service.elections,
+        );
+        assert!(first.is_empty());
+
+        let mut second = vec![];
+        handle_vote_response(
+            &mut second,
+            service.state.as_mut().unwrap(),
+            peer_two.clone(),
+            me.id.clone(),
+            100,
+            &me,
+            &mut service.elections,
+        );
+
+        assert_eq!(
+            service.state.as_ref().unwrap().elected_leader_id,
+            Some(me.id.clone())
+        );
+        assert_eq!(service.state.as_ref().unwrap().epoch, Some(1));
+        assert!(matches!(
+            second.as_slice(),
+            [
+                NodeProtocol::Leader { id, epoch, ts },
+                NodeProtocol::Leader { id: id2, epoch: epoch2, ts: ts2 }
+            ] if *epoch == 1
+                && *ts == 100
+                && *epoch2 == 1
+                && *ts2 == 100
+                && ((id == &peer_one && id2 == &peer_two) || (id == &peer_two && id2 == &peer_one))
+        ));
+    }
+
+    #[tokio::test]
+    async fn vote_responses_complete_election_with_worker_nodes_present() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let manager_peer = node_id("22222222-2222-2222-2222-222222222222");
+        let worker_peer = node_id("33333333-3333-3333-3333-333333333333");
+        let (mut service, _config) = service(me.clone());
+        let now = now_millis();
+        service.state = Some(State {
+            epoch: Some(0),
+            elected_leader_id: Some(me.id.clone()),
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, now)),
+                (
+                    manager_peer.clone(),
+                    Node::Manager {
+                        host: "manager.local".to_string(),
+                        port: 9001,
+                        last_heartbeat: 0,
+                    },
+                ),
+                (
+                    worker_peer.clone(),
+                    worker_node("worker.local", 9100, 0, vec![1, 2]),
+                ),
+            ]),
+            workers_with_calculated_partitions: Default::default(),
+        });
+        service.elections.insert(
+            1,
+            Election::Mine {
+                ts: 100,
+                approvers: HashSet::new(),
+            },
+        );
+
+        let mut output = vec![];
+        handle_vote_response(
+            &mut output,
+            service.state.as_mut().unwrap(),
+            manager_peer.clone(),
+            me.id.clone(),
+            100,
+            &me,
+            &mut service.elections,
+        );
+
+        assert_eq!(
+            service.state.as_ref().unwrap().elected_leader_id,
+            Some(me.id.clone())
+        );
+        assert_eq!(service.state.as_ref().unwrap().epoch, Some(1));
+        assert_eq!(output.len(), 2);
+        assert!(
+            output
+                .iter()
+                .any(|msg| matches!(msg, NodeProtocol::Leader { id, .. } if id == &manager_peer))
+        );
+        assert!(
+            output
+                .iter()
+                .any(|msg| matches!(msg, NodeProtocol::Leader { id, .. } if id == &worker_peer))
+        );
+    }
+
+    #[tokio::test]
+    async fn cluster_state_updates_known_nodes_and_requests_unknown_ones() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let peer = node_id("22222222-2222-2222-2222-222222222222");
         let unknown = node_id("33333333-3333-3333-3333-333333333333");
-        let mut service = service(me.clone());
+        let (mut service, _config) = service(me.clone());
         let now = now_millis();
         service.state = Some(State {
             epoch: Some(1),
@@ -1130,7 +1503,7 @@ mod tests {
                     port: 9002,
                     last_heartbeat: now + 2,
                 },
-            ],
+            ]
         );
 
         assert!(matches!(
@@ -1152,681 +1525,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cluster_state_adds_unknown_workers_and_updates_known_ones() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let worker = node_id("22222222-2222-2222-2222-222222222222");
-        let mut service = service(me.clone());
-        let now = now_millis();
-        service.state = Some(State {
-            epoch: Some(1),
-            elected_leader_id: Some(me.id.clone()),
-            nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, now)),
-                (
-                    worker.clone(),
-                    worker_node("worker.local", 9100, now, vec![1, 2]),
-                ),
-            ]),
-            workers_with_calculated_partitions: Default::default(),
-        });
-
-        let mut output = vec![];
-        handle_cluster_state(
-            &mut output,
-            service.state.as_mut().unwrap(),
-            2,
-            me.id.clone(),
-            vec![
-                ClusterNode::Worker {
-                    id: worker.clone(),
-                    host: "worker.local".to_string(),
-                    port: 9100,
-                    last_heartbeat: now + 10,
-                    partitions: vec![2, 3, 3, 4],
-                },
-                ClusterNode::Worker {
-                    id: node_id("33333333-3333-3333-3333-333333333333"),
-                    host: "worker-two.local".to_string(),
-                    port: 9101,
-                    last_heartbeat: now + 20,
-                    partitions: vec![7, 8],
-                },
-            ],
-        );
-
-        assert!(output.is_empty());
-        let state = service.state.as_ref().unwrap();
-        assert!(matches!(
-            state.nodes.get(&worker),
-            Some(Node::Worker {
-                host,
-                port,
-                last_heartbeat,
-                partitions,
-            }) if host == "worker.local"
-                && *port == 9100
-                && *last_heartbeat == now + 10
-                && partitions == &vec![1, 2, 3, 4]
-        ));
-        assert!(matches!(
-            state.nodes.get(&node_id("33333333-3333-3333-3333-333333333333")),
-            Some(Node::Worker {
-                host,
-                port,
-                last_heartbeat,
-                partitions,
-            }) if host == "worker-two.local"
-                && *port == 9101
-                && *last_heartbeat == now + 20
-                && partitions == &vec![7, 8]
-        ));
-    }
-
-    #[test]
-    fn stale_cluster_state_is_ignored() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let leader = node_id("22222222-2222-2222-2222-222222222222");
-        let mut service = service(me.clone());
-        let now = now_millis();
-        service.state = Some(State {
-            epoch: Some(3),
-            elected_leader_id: Some(leader.clone()),
-            nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, now)),
-                (leader.clone(), node("leader.local", 9001, now)),
-            ]),
-            workers_with_calculated_partitions: Default::default(),
-        });
-
-        let mut output = vec![];
-        handle_cluster_state(
-            &mut output,
-            service.state.as_mut().unwrap(),
-            2,
-            me.id.clone(),
-            vec![ClusterNode::Manager {
-                id: me.id.clone(),
-                host: me.host.clone(),
-                port: me.port,
-                last_heartbeat: now + 50,
-            }],
-        );
-
-        assert!(output.is_empty());
-        let state = service.state.as_mut().unwrap();
-        assert_eq!(state.epoch, Some(3));
-        assert_eq!(state.elected_leader_id, Some(leader));
-        assert_eq!(
-            *state.nodes.get_mut(&me.id).unwrap().last_heartbeat_mut(),
-            now
-        );
-    }
-
-    #[test]
-    fn leader_message_updates_epoch_and_clears_pending_elections() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let leader = node_id("22222222-2222-2222-2222-222222222222");
-        let mut service = service(me.clone());
-        let now = now_millis();
-        service.state = Some(State {
-            epoch: Some(1),
-            elected_leader_id: None,
-            nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, now)),
-                (leader.clone(), node("leader.local", 9001, now)),
-            ]),
-            workers_with_calculated_partitions: Default::default(),
-        });
-        service.elections.insert(
-            2,
-            Election::Mine {
-                ts: now,
-                approvers: HashSet::from([leader.clone()]),
-            },
-        );
-
-        handle_leader(
-            &mut Vec::new(),
-            service.state.as_mut().unwrap(),
-            leader.clone(),
-            2,
-            now + 10,
-            &me,
-            &mut service.elections,
-        );
-
-        let state = service.state.as_mut().unwrap();
-        assert_eq!(state.epoch, Some(2));
-        assert_eq!(state.elected_leader_id, Some(leader.clone()));
-        assert_eq!(
-            *state.nodes.get_mut(&leader).unwrap().last_heartbeat_mut(),
-            now + 10
-        );
-        assert!(service.elections.is_empty());
-    }
-
-    #[test]
-    fn tick_emits_heartbeats_for_stale_self_heartbeat() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let peer_id = node_id("22222222-2222-2222-2222-222222222222");
-        let mut service = service(me.clone());
-        let now = now_millis() - 1_000;
-        service.state = Some(State {
-            epoch: Some(1),
-            elected_leader_id: Some(me.id.clone()),
-            nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, now)),
-                (
-                    peer_id.clone(),
-                    Node::Manager {
-                        host: "peer.local".to_string(),
-                        port: 9001,
-                        last_heartbeat: 0,
-                    },
-                ),
-            ]),
-            workers_with_calculated_partitions: Default::default(),
-        });
-
-        let mut output = vec![];
-        service.tick(&mut output);
-
-        assert!(matches!(
-            output.as_slice(),
-            [NodeProtocol::Heartbeat { recipient_id, heartbeat }] if recipient_id == &peer_id
-                && heartbeat.id == me.id
-        ));
-    }
-
-    #[test]
-    fn tick_starts_election_when_leader_is_missing() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let peer = node_id("22222222-2222-2222-2222-222222222222");
-        let mut service = service(me.clone());
-        let now = now_millis();
-        service.state = Some(State {
-            epoch: Some(4),
-            elected_leader_id: None,
-            nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, now)),
-                (peer.clone(), node("peer.local", 9001, 0)),
-            ]),
-            workers_with_calculated_partitions: Default::default(),
-        });
-
-        let mut output = vec![];
-        service.tick(&mut output);
-
-        assert!(matches!(
-            output.as_slice(),
-            [NodeProtocol::VoteRequest { id, epoch, .. }] if id == &peer && *epoch == 5
-        ));
-        assert!(matches!(
-            service.elections.get(&5),
-            Some(Election::Mine { .. })
-        ));
-    }
-
-    #[test]
-    fn vote_responses_elect_self_and_broadcast_leader() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let peer_one = node_id("22222222-2222-2222-2222-222222222222");
-        let peer_two = node_id("33333333-3333-3333-3333-333333333333");
-        let mut service = service(me.clone());
-        let now = now_millis();
-        service.state = Some(State {
-            epoch: Some(0),
-            elected_leader_id: Some(me.id.clone()),
-            nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, now)),
-                (
-                    peer_one.clone(),
-                    Node::Manager {
-                        host: "peer-one.local".to_string(),
-                        port: 9001,
-                        last_heartbeat: 0,
-                    },
-                ),
-                (
-                    peer_two.clone(),
-                    Node::Manager {
-                        host: "peer-two.local".to_string(),
-                        port: 9002,
-                        last_heartbeat: 0,
-                    },
-                ),
-            ]),
-            workers_with_calculated_partitions: Default::default(),
-        });
-        service.elections.insert(
-            1,
-            Election::Mine {
-                ts: 100,
-                approvers: HashSet::new(),
-            },
-        );
-
-        let mut first = vec![];
-        service.process(
-            NodeProtocol::VoteResponse {
-                id: peer_one.clone(),
-                leader_id: me.id.clone(),
-                ts: 100,
-            },
-            &mut first,
-        );
-        assert!(first.is_empty());
-
-        let mut second = vec![];
-        service.process(
-            NodeProtocol::VoteResponse {
-                id: peer_two.clone(),
-                leader_id: me.id.clone(),
-                ts: 100,
-            },
-            &mut second,
-        );
-
-        assert_eq!(
-            service.state.as_ref().unwrap().elected_leader_id,
-            Some(me.id.clone())
-        );
-        assert_eq!(service.state.as_ref().unwrap().epoch, Some(1));
-        assert!(matches!(
-            second.as_slice(),
-            [
-                NodeProtocol::Leader { id, epoch, ts },
-                NodeProtocol::Leader { id: id2, epoch: epoch2, ts: ts2 }
-            ] if *epoch == 1
-                && *ts == 100
-                && *epoch2 == 1
-                && *ts2 == 100
-                && ((id == &peer_one && id2 == &peer_two) || (id == &peer_two && id2 == &peer_one))
-        ));
-    }
-
-    #[test]
-    fn vote_responses_complete_election_with_worker_nodes_present() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let manager_peer = node_id("22222222-2222-2222-2222-222222222222");
-        let worker_peer = node_id("33333333-3333-3333-3333-333333333333");
-        let mut service = service(me.clone());
-        let now = now_millis();
-        service.state = Some(State {
-            epoch: Some(0),
-            elected_leader_id: Some(me.id.clone()),
-            nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, now)),
-                (manager_peer.clone(), node("manager.local", 9001, 0)),
-                (
-                    worker_peer.clone(),
-                    worker_node("worker.local", 9100, 0, vec![1, 2]),
-                ),
-            ]),
-            workers_with_calculated_partitions: Default::default(),
-        });
-        service.elections.insert(
-            1,
-            Election::Mine {
-                ts: 100,
-                approvers: HashSet::new(),
-            },
-        );
-
-        let mut output = vec![];
-        service.process(
-            NodeProtocol::VoteResponse {
-                id: manager_peer.clone(),
-                leader_id: me.id.clone(),
-                ts: 100,
-            },
-            &mut output,
-        );
-
-        assert_eq!(
-            service.state.as_ref().unwrap().elected_leader_id,
-            Some(me.id.clone())
-        );
-        assert_eq!(service.state.as_ref().unwrap().epoch, Some(1));
-        assert_eq!(output.len(), 2);
-        assert!(
-            output
-                .iter()
-                .any(|msg| matches!(msg, NodeProtocol::Leader { id, .. } if id == &manager_peer))
-        );
-        assert!(
-            output
-                .iter()
-                .any(|msg| matches!(msg, NodeProtocol::Leader { id, .. } if id == &worker_peer))
-        );
-    }
-
-    #[test]
-    fn node_disconnected_clears_current_leader() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let leader = node_id("22222222-2222-2222-2222-222222222222");
-        let mut service = service(me);
-        service.state = Some(State {
-            epoch: Some(7),
-            elected_leader_id: Some(leader.clone()),
-            nodes: HashMap::from([(
-                leader.clone(),
-                Node::Manager {
-                    host: "leader.local".to_string(),
-                    port: 9001,
-                    last_heartbeat: 0,
-                },
-            )]),
-            workers_with_calculated_partitions: Default::default(),
-        });
-
-        let mut output = vec![];
-        service.process(
-            NodeProtocol::NodeDisconnected { id: leader.clone() },
-            &mut output,
-        );
-
-        assert!(output.is_empty());
-        let state = service.state.as_ref().unwrap();
-        assert_eq!(state.elected_leader_id, None);
-        assert!(!state.nodes.contains_key(&leader));
-    }
-
-    #[test]
-    fn new_connection_while_we_are_leader_does_not_request_cluster_state() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let peer = node_id("22222222-2222-2222-2222-222222222222");
-        let now = now_millis();
-        let mut service = service(me.clone());
-        service.state = Some(State {
-            epoch: Some(1),
-            elected_leader_id: Some(me.id.clone()),
-            nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, now)),
-                (
-                    peer.clone(),
-                    Node::Manager {
-                        host: "peer.local".to_string(),
-                        port: 9001,
-                        last_heartbeat: now,
-                    },
-                ),
-            ]),
-            workers_with_calculated_partitions: Default::default(),
-        });
-
-        let mut output = vec![];
-        service.process(
-            NodeProtocol::NewConnection {
-                id: Some(node_id("33333333-3333-3333-3333-333333333333")),
-                host: "third.local".to_string(),
-                port: 9002,
-                manager: true,
-            },
-            &mut output,
-        );
-
-        assert!(output.is_empty());
-    }
-
-    #[test]
-    fn heartbeat_from_known_peer_is_forwarded_only_when_we_are_leader() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let peer_one = node_id("22222222-2222-2222-2222-222222222222");
-        let peer_two = node_id("33333333-3333-3333-3333-333333333333");
-        let now = now_millis();
-        let mut service = service(me.clone());
-        service.state = Some(State {
-            epoch: Some(1),
-            elected_leader_id: Some(me.id.clone()),
-            nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, now)),
-                (
-                    peer_one.clone(),
-                    Node::Manager {
-                        host: "peer-one.local".to_string(),
-                        port: 9001,
-                        last_heartbeat: 0,
-                    },
-                ),
-                (
-                    peer_two.clone(),
-                    Node::Manager {
-                        host: "peer-two.local".to_string(),
-                        port: 9002,
-                        last_heartbeat: now,
-                    },
-                ),
-            ]),
-            workers_with_calculated_partitions: Default::default(),
-        });
-
-        let mut forwarded = vec![];
-        service.process(
-            NodeProtocol::Heartbeat {
-                recipient_id: me.id.clone(),
-                heartbeat: Heartbeat {
-                    id: peer_one.clone(),
-                    ts: 42,
-                },
-            },
-            &mut forwarded,
-        );
-
-        assert!(matches!(
-            forwarded.as_slice(),
-            [NodeProtocol::Heartbeat { recipient_id, heartbeat }]
-                if recipient_id == &peer_two && heartbeat.id == peer_one && heartbeat.ts == 42
-        ));
-
-        service.state.as_mut().unwrap().elected_leader_id = Some(peer_two.clone());
-
-        let mut not_forwarded = vec![];
-        service.process(
-            NodeProtocol::Heartbeat {
-                recipient_id: me.id.clone(),
-                heartbeat: Heartbeat {
-                    id: peer_one.clone(),
-                    ts: 43,
-                },
-            },
-            &mut not_forwarded,
-        );
-
-        assert!(not_forwarded.is_empty());
-        assert_eq!(
-            *service
-                .state
-                .as_mut()
-                .unwrap()
-                .nodes
-                .get_mut(&peer_one)
-                .unwrap()
-                .last_heartbeat_mut(),
-            43
-        );
-    }
-
-    #[test]
-    fn heartbeat_from_worker_updates_worker_without_forwarding() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let worker = node_id("22222222-2222-2222-2222-222222222222");
-        let manager_peer = node_id("33333333-3333-3333-3333-333333333333");
-        let mut service = service(me.clone());
-        service.state = Some(State {
-            epoch: Some(1),
-            elected_leader_id: Some(me.id.clone()),
-            nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, now_millis())),
-                (
-                    worker.clone(),
-                    worker_node("worker.local", 9100, 12, vec![1, 2]),
-                ),
-                (manager_peer.clone(), node("manager.local", 9001, 0)),
-            ]),
-            workers_with_calculated_partitions: Default::default(),
-        });
-
-        let mut output = vec![];
-        service.process(
-            NodeProtocol::Heartbeat {
-                recipient_id: me.id.clone(),
-                heartbeat: Heartbeat {
-                    id: worker.clone(),
-                    ts: 44,
-                },
-            },
-            &mut output,
-        );
-
-        assert!(matches!(
-            output.as_slice(),
-            [NodeProtocol::Heartbeat { recipient_id, heartbeat }]
-                if recipient_id == &manager_peer && heartbeat.id == worker && heartbeat.ts == 44
-        ));
-        assert_eq!(
-            *service
-                .state
-                .as_mut()
-                .unwrap()
-                .nodes
-                .get_mut(&worker)
-                .unwrap()
-                .last_heartbeat_mut(),
-            44
-        );
-    }
-
-    #[test]
-    fn vote_request_adds_new_election_reuses_candidate_and_ignores_stale_epochs() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let peer_one = node_id("22222222-2222-2222-2222-222222222222");
-        let peer_two = node_id("33333333-3333-3333-3333-333333333333");
-        let now = now_millis();
-        let mut service = service(me.clone());
-        service.state = Some(State {
-            epoch: Some(0),
-            elected_leader_id: Some(me.id.clone()),
-            nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, now)),
-                (
-                    peer_one.clone(),
-                    Node::Manager {
-                        host: "peer-one.local".to_string(),
-                        port: 9001,
-                        last_heartbeat: now,
-                    },
-                ),
-                (
-                    peer_two.clone(),
-                    Node::Manager {
-                        host: "peer-two.local".to_string(),
-                        port: 9002,
-                        last_heartbeat: now,
-                    },
-                ),
-            ]),
-            workers_with_calculated_partitions: Default::default(),
-        });
-
-        let mut first = vec![];
-        service.process(
-            NodeProtocol::VoteRequest {
-                id: peer_one.clone(),
-                epoch: 1,
-                ts: 100,
-            },
-            &mut first,
-        );
-        assert!(matches!(
-            first.as_slice(),
-            [NodeProtocol::VoteResponse { id, leader_id, ts }]
-                if id == &peer_one && leader_id == &peer_one && *ts == 100
-        ));
-
-        let mut second = vec![];
-        service.process(
-            NodeProtocol::VoteRequest {
-                id: peer_two.clone(),
-                epoch: 1,
-                ts: 200,
-            },
-            &mut second,
-        );
-
-        assert!(matches!(
-            second.as_slice(),
-            [NodeProtocol::VoteResponse { id, leader_id, ts }]
-                if id == &peer_two && leader_id == &peer_one && *ts == 100
-        ));
-
-        let mut stale = vec![];
-        service.process(
-            NodeProtocol::VoteRequest {
-                id: peer_two.clone(),
-                epoch: 0,
-                ts: 300,
-            },
-            &mut stale,
-        );
-        assert!(stale.is_empty());
-    }
-
-    #[test]
-    fn vote_response_for_unknown_leader_requests_cluster_state() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let peer = node_id("22222222-2222-2222-2222-222222222222");
-        let unknown_leader = node_id("33333333-3333-3333-3333-333333333333");
-        let now = now_millis();
-        let mut service = service(me.clone());
-        service.state = Some(State {
-            epoch: Some(1),
-            elected_leader_id: Some(me.id.clone()),
-            nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, now)),
-                (
-                    peer.clone(),
-                    Node::Manager {
-                        host: "peer.local".to_string(),
-                        port: 9001,
-                        last_heartbeat: now,
-                    },
-                ),
-            ]),
-            workers_with_calculated_partitions: Default::default(),
-        });
-        service.elections.insert(
-            1,
-            Election::Mine {
-                ts: 100,
-                approvers: HashSet::new(),
-            },
-        );
-
-        let mut output = vec![];
-        service.process(
-            NodeProtocol::VoteResponse {
-                id: peer.clone(),
-                leader_id: unknown_leader,
-                ts: 100,
-            },
-            &mut output,
-        );
-
-        assert!(matches!(
-            output.as_slice(),
-            [NodeProtocol::GetClusterState { id }] if id == &peer
-        ));
-    }
-
-    #[test]
-    fn cluster_state_accepts_new_epoch_same_leader_and_rejects_conflicts() {
+    #[tokio::test]
+    async fn cluster_state_accepts_new_epoch_same_leader_and_rejects_conflicts() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let leader = node_id("22222222-2222-2222-2222-222222222222");
         let other_leader = node_id("33333333-3333-3333-3333-333333333333");
+        let (mut service, _config) = service(me.clone());
         let now = now_millis();
-        let mut service = service(me.clone());
         service.state = Some(State {
             epoch: None,
             elected_leader_id: None,
@@ -1944,14 +1649,214 @@ mod tests {
         );
     }
 
-    #[test]
-    fn leader_with_unknown_id_requests_cluster_state_from_manager_peers_only() {
+    #[tokio::test]
+    async fn cluster_state_overwrites_known_worker_partitions_and_adds_unknown_workers() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let worker = node_id("22222222-2222-2222-2222-222222222222");
+        let other_worker = node_id("33333333-3333-3333-3333-333333333333");
+        let (mut service, _config) = service(me.clone());
+        let now = now_millis();
+        service.state = Some(State {
+            epoch: Some(1),
+            elected_leader_id: Some(me.id.clone()),
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, now)),
+                (
+                    worker.clone(),
+                    worker_node("worker.local", 9100, now, vec![1, 2]),
+                ),
+            ]),
+            workers_with_calculated_partitions: Default::default(),
+        });
+
+        let mut output = vec![];
+        handle_cluster_state(
+            &mut output,
+            service.state.as_mut().unwrap(),
+            2,
+            me.id.clone(),
+            vec![
+                ClusterNode::Worker {
+                    id: worker.clone(),
+                    host: "worker.local".to_string(),
+                    port: 9100,
+                    last_heartbeat: now + 10,
+                    partitions: vec![2, 3, 3, 4],
+                },
+                ClusterNode::Worker {
+                    id: other_worker.clone(),
+                    host: "worker-two.local".to_string(),
+                    port: 9101,
+                    last_heartbeat: now + 20,
+                    partitions: vec![7, 8],
+                },
+            ],
+        );
+
+        assert!(output.is_empty());
+        let state = service.state.as_ref().unwrap();
+        assert!(matches!(
+            state.nodes.get(&worker),
+            Some(Node::Worker {
+                host,
+                port,
+                last_heartbeat,
+                partitions,
+            }) if host == "worker.local"
+                && *port == 9100
+                && *last_heartbeat == now + 10
+                && partitions == &vec![2, 3, 3, 4]
+        ));
+        assert!(matches!(
+            state.nodes.get(&other_worker),
+            Some(Node::Worker {
+                host,
+                port,
+                last_heartbeat,
+                partitions,
+            }) if host == "worker-two.local"
+                && *port == 9101
+                && *last_heartbeat == now + 20
+                && partitions == &vec![7, 8]
+        ));
+    }
+
+    #[tokio::test]
+    async fn new_connection_while_we_are_leader_does_not_request_cluster_state() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let peer = node_id("22222222-2222-2222-2222-222222222222");
+        let now = now_millis();
+        let (mut service, _config) = service(me.clone());
+        service.state = Some(State {
+            epoch: Some(1),
+            elected_leader_id: Some(me.id.clone()),
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, now)),
+                (
+                    peer.clone(),
+                    Node::Manager {
+                        host: "peer.local".to_string(),
+                        port: 9001,
+                        last_heartbeat: now,
+                    },
+                ),
+            ]),
+            workers_with_calculated_partitions: Default::default(),
+        });
+
+        let mut output = vec![];
+        handle_new_connection(
+            &mut output,
+            service.state.as_mut().unwrap(),
+            Some(node_id("33333333-3333-3333-3333-333333333333")),
+            "third.local".to_string(),
+            9002,
+            &me,
+            true,
+        );
+
+        assert!(output.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stale_cluster_state_is_ignored() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let leader = node_id("22222222-2222-2222-2222-222222222222");
+        let (mut service, config) = service(me.clone());
+        let now = now_millis();
+        service.state = Some(State {
+            epoch: Some(3),
+            elected_leader_id: Some(leader.clone()),
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, now)),
+                (leader.clone(), node("leader.local", 9001, now)),
+            ]),
+            workers_with_calculated_partitions: Default::default(),
+        });
+        {
+            let mut guard = config.write().await;
+            guard.partitions_amount = Some(1);
+            guard.replication_factor = Some(1);
+        }
+
+        let mut output = vec![];
+        handle_cluster_state(
+            &mut output,
+            service.state.as_mut().unwrap(),
+            2,
+            me.id.clone(),
+            vec![ClusterNode::Manager {
+                id: me.id.clone(),
+                host: me.host.clone(),
+                port: me.port,
+                last_heartbeat: now + 50,
+            }]
+        );
+
+        assert!(output.is_empty());
+        let state = service.state.as_mut().unwrap();
+        assert_eq!(state.epoch, Some(3));
+        assert_eq!(state.elected_leader_id, Some(leader));
+        assert_eq!(
+            *state.nodes.get_mut(&me.id).unwrap().last_heartbeat_mut(),
+            now
+        );
+        let guard = config.read().await;
+        assert_eq!(guard.partitions_amount, Some(1));
+        assert_eq!(guard.replication_factor, Some(1));
+    }
+
+    #[tokio::test]
+    async fn leader_message_updates_epoch_and_clears_pending_elections() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let leader = node_id("22222222-2222-2222-2222-222222222222");
+        let (mut service, _config) = service(me.clone());
+        let now = now_millis();
+        service.state = Some(State {
+            epoch: Some(1),
+            elected_leader_id: None,
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, now)),
+                (leader.clone(), node("leader.local", 9001, now)),
+            ]),
+            workers_with_calculated_partitions: Default::default(),
+        });
+        service.elections.insert(
+            2,
+            Election::Mine {
+                ts: now,
+                approvers: HashSet::from([leader.clone()]),
+            },
+        );
+
+        handle_leader(
+            &mut Vec::new(),
+            service.state.as_mut().unwrap(),
+            leader.clone(),
+            2,
+            now + 10,
+            &me,
+            &mut service.elections,
+        );
+
+        let state = service.state.as_mut().unwrap();
+        assert_eq!(state.epoch, Some(2));
+        assert_eq!(state.elected_leader_id, Some(leader.clone()));
+        assert_eq!(
+            *state.nodes.get_mut(&leader).unwrap().last_heartbeat_mut(),
+            now + 10
+        );
+        assert!(service.elections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn leader_with_unknown_id_requests_cluster_state_from_manager_peers_only() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let manager_peer = node_id("22222222-2222-2222-2222-222222222222");
         let worker_peer = node_id("33333333-3333-3333-3333-333333333333");
         let leader = node_id("44444444-4444-4444-4444-444444444444");
         let now = now_millis();
-        let mut service = service(me.clone());
+        let (mut service, _config) = service(me.clone());
         service.state = Some(State {
             epoch: Some(1),
             elected_leader_id: None,
@@ -1983,12 +1888,12 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn leader_messages_only_move_state_forward() {
+    #[tokio::test]
+    async fn leader_messages_only_move_state_forward() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let leader = node_id("22222222-2222-2222-2222-222222222222");
         let now = now_millis();
-        let mut service = service(me.clone());
+        let (mut service, _config) = service(me.clone());
         service.state = Some(State {
             epoch: Some(1),
             elected_leader_id: None,
@@ -2048,44 +1953,23 @@ mod tests {
         );
     }
 
-    #[test]
-    fn get_cluster_state_is_ignored_until_the_cluster_is_known() {
+    #[tokio::test]
+    async fn tick_emits_heartbeats_for_stale_self_heartbeat() {
         let me = me("11111111-1111-1111-1111-111111111111");
-        let mut service = service(me.clone());
-        service.state = Some(State {
-            epoch: None,
-            elected_leader_id: None,
-            nodes: HashMap::from([(me.id.clone(), fresh_node(&me, now_millis()))]),
-            workers_with_calculated_partitions: Default::default(),
-        });
-
-        let mut output = vec![];
-        service.process(
-            NodeProtocol::GetClusterState {
-                id: node_id("22222222-2222-2222-2222-222222222222"),
-            },
-            &mut output,
-        );
-
-        assert!(output.is_empty());
-    }
-
-    #[test]
-    fn node_disconnected_for_unknown_node_is_a_noop() {
-        let me = me("11111111-1111-1111-1111-111111111111");
-        let leader = node_id("22222222-2222-2222-2222-222222222222");
-        let mut service = service(me.clone());
+        let peer_id = node_id("22222222-2222-2222-2222-222222222222");
+        let (mut service, _config) = service(me.clone());
+        let now = now_millis() - 1_000;
         service.state = Some(State {
             epoch: Some(1),
-            elected_leader_id: Some(leader.clone()),
+            elected_leader_id: Some(me.id.clone()),
             nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, now_millis())),
+                (me.id.clone(), fresh_node(&me, now)),
                 (
-                    leader.clone(),
+                    peer_id.clone(),
                     Node::Manager {
-                        host: "leader.local".to_string(),
+                        host: "peer.local".to_string(),
                         port: 9001,
-                        last_heartbeat: now_millis(),
+                        last_heartbeat: 0,
                     },
                 ),
             ]),
@@ -2093,26 +1977,90 @@ mod tests {
         });
 
         let mut output = vec![];
-        service.process(
-            NodeProtocol::NodeDisconnected {
-                id: node_id("33333333-3333-3333-3333-333333333333"),
-            },
-            &mut output,
-        );
+        service.tick(&mut output).await;
 
-        assert!(output.is_empty());
-        let state = service.state.as_ref().unwrap();
-        assert!(state.nodes.contains_key(&me.id));
-        assert!(state.nodes.contains_key(&leader));
-        assert_eq!(state.elected_leader_id, Some(leader));
+        assert!(matches!(
+            output.as_slice(),
+            [NodeProtocol::Heartbeat { recipient_id, heartbeat }] if recipient_id == &peer_id
+                && heartbeat.id == me.id
+        ));
     }
 
-    #[test]
-    fn tick_clears_stale_remote_leader_without_emitting_messages() {
+    #[tokio::test]
+    async fn tick_starts_election_when_leader_is_missing() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let peer = node_id("22222222-2222-2222-2222-222222222222");
+        let (mut service, _config) = service(me.clone());
+        service.state = Some(State {
+            epoch: Some(4),
+            elected_leader_id: None,
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, now_millis())),
+                (
+                    peer.clone(),
+                    Node::Manager {
+                        host: "peer.local".to_string(),
+                        port: 9001,
+                        last_heartbeat: 0,
+                    },
+                ),
+            ]),
+            workers_with_calculated_partitions: Default::default(),
+        });
+
+        let mut output = vec![];
+        service.tick(&mut output).await;
+
+        assert!(matches!(
+            output.as_slice(),
+            [NodeProtocol::VoteRequest { id, epoch, .. }] if id == &peer && *epoch == 5
+        ));
+        assert!(matches!(
+            service.elections.last_key_value(),
+            Some((5, Election::Mine { .. }))
+        ));
+    }
+
+    #[tokio::test]
+    async fn tick_starts_a_new_election_only_for_manager_peers() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let manager_peer = node_id("22222222-2222-2222-2222-222222222222");
+        let worker_peer = node_id("33333333-3333-3333-3333-333333333333");
+        let (mut service, _config) = service(me.clone());
+        let future = now_millis() + 10_000;
+        service.state = Some(State {
+            epoch: Some(7),
+            elected_leader_id: None,
+            nodes: HashMap::from([
+                (me.id.clone(), fresh_node(&me, future)),
+                (manager_peer.clone(), node("manager.local", 9001, 0)),
+                (
+                    worker_peer.clone(),
+                    worker_node("worker.local", 9100, 0, vec![1]),
+                ),
+            ]),
+            workers_with_calculated_partitions: Default::default(),
+        });
+
+        let mut output = vec![];
+        service.tick(&mut output).await;
+
+        assert!(matches!(
+            output.as_slice(),
+            [NodeProtocol::VoteRequest { id, epoch, .. }] if id == &manager_peer && *epoch == 8
+        ));
+        assert!(matches!(
+            service.elections.last_key_value(),
+            Some((8, Election::Mine { .. }))
+        ));
+    }
+
+    #[tokio::test]
+    async fn tick_clears_stale_remote_leader_without_emitting_messages() {
         let me = me("11111111-1111-1111-1111-111111111111");
         let leader = node_id("22222222-2222-2222-2222-222222222222");
         let now = now_millis();
-        let mut service = service(me.clone());
+        let (mut service, _config) = service(me.clone());
         service.state = Some(State {
             epoch: None,
             elected_leader_id: Some(leader.clone()),
@@ -2131,26 +2079,49 @@ mod tests {
         });
 
         let mut output = vec![];
-        service.tick(&mut output);
+        service.tick(&mut output).await;
 
         assert!(output.is_empty());
         assert_eq!(service.state.as_ref().unwrap().elected_leader_id, None);
     }
 
-    #[test]
-    fn tick_starts_a_new_election_when_no_leader_exists() {
+    #[tokio::test]
+    async fn get_cluster_state_is_ignored_until_the_cluster_is_known() {
         let me = me("11111111-1111-1111-1111-111111111111");
-        let peer = node_id("22222222-2222-2222-2222-222222222222");
-        let mut service = service(me.clone());
+        let (mut service, config) = service(me.clone());
         service.state = Some(State {
-            epoch: Some(7),
+            epoch: None,
             elected_leader_id: None,
+            nodes: HashMap::from([(me.id.clone(), fresh_node(&me, now_millis()))]),
+            workers_with_calculated_partitions: Default::default(),
+        });
+
+        let mut output = vec![];
+        handle_get_cluster_state(
+            &mut output,
+            service.state.as_mut().unwrap(),
+            node_id("22222222-2222-2222-2222-222222222222"),
+            config.as_ref(),
+        )
+        .await;
+
+        assert!(output.is_empty());
+    }
+
+    #[tokio::test]
+    async fn node_disconnected_for_unknown_node_is_a_noop() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let leader = node_id("22222222-2222-2222-2222-222222222222");
+        let (mut service, _config) = service(me.clone());
+        service.state = Some(State {
+            epoch: Some(1),
+            elected_leader_id: Some(leader.clone()),
             nodes: HashMap::from([
                 (me.id.clone(), fresh_node(&me, now_millis())),
                 (
-                    peer.clone(),
+                    leader.clone(),
                     Node::Manager {
-                        host: "peer.local".to_string(),
+                        host: "leader.local".to_string(),
                         port: 9001,
                         last_heartbeat: now_millis(),
                     },
@@ -2159,50 +2130,97 @@ mod tests {
             workers_with_calculated_partitions: Default::default(),
         });
 
-        let mut output = vec![];
-        service.tick(&mut output);
+        handle_node_disconnected(
+            service.state.as_mut().unwrap(),
+            node_id("33333333-3333-3333-3333-333333333333"),
+            &me,
+        );
 
-        assert!(matches!(
-            output.as_slice(),
-            [NodeProtocol::VoteRequest { id, epoch, .. }] if id == &peer && *epoch == 8
-        ));
-        assert!(matches!(
-            service.elections.last_key_value(),
-            Some((8, Election::Mine { .. }))
-        ));
+        let state = service.state.as_ref().unwrap();
+        assert!(state.nodes.contains_key(&me.id));
+        assert!(state.nodes.contains_key(&leader));
+        assert_eq!(state.elected_leader_id, Some(leader));
     }
 
-    #[test]
-    fn tick_starts_a_new_election_only_for_manager_peers() {
+    #[tokio::test]
+    async fn tick_recomputes_worker_partitions_and_broadcasts_cluster_state() {
         let me = me("11111111-1111-1111-1111-111111111111");
-        let manager_peer = node_id("22222222-2222-2222-2222-222222222222");
-        let worker_peer = node_id("33333333-3333-3333-3333-333333333333");
-        let mut service = service(me.clone());
-        let future = now_millis() + 10_000;
+        let worker_a = node_id("22222222-2222-2222-2222-222222222222");
+        let worker_b = node_id("33333333-3333-3333-3333-333333333333");
+        let (mut service, config) = service(me.clone());
+        {
+            let mut guard = config.write().await;
+            guard.partitions_amount = Some(5);
+            guard.replication_factor = Some(2);
+        }
         service.state = Some(State {
-            epoch: Some(7),
-            elected_leader_id: None,
+            epoch: Some(1),
+            elected_leader_id: Some(me.id.clone()),
             nodes: HashMap::from([
-                (me.id.clone(), fresh_node(&me, future)),
-                (manager_peer.clone(), node("manager.local", 9001, 0)),
-                (
-                    worker_peer.clone(),
-                    worker_node("worker.local", 9100, 0, vec![1]),
-                ),
+                (me.id.clone(), fresh_node(&me, now_millis())),
+                (worker_a.clone(), worker_node("worker-a.local", 9100, 0, vec![])),
+                (worker_b.clone(), worker_node("worker-b.local", 9101, 0, vec![])),
             ]),
             workers_with_calculated_partitions: Default::default(),
         });
 
         let mut output = vec![];
-        service.tick(&mut output);
+        service.tick(&mut output).await;
 
-        assert!(matches!(
-            output.as_slice(),
-            [NodeProtocol::VoteRequest { id, epoch, .. }] if id == &manager_peer && *epoch == 8
-        ));
-        assert!(matches!(
-            service.elections.last_key_value(),
-            Some((8, Election::Mine { .. }))
-        ));
+        assert_eq!(output.len(), 2);
+        assert!(output.iter().all(|msg| matches!(
+            msg,
+            NodeProtocol::ClusterState { recipient_id, state }
+                if state.config.clone().unwrap().partitions_amount == 5
+                    && state.config.clone().unwrap().replication_factor == 2
+                    && (recipient_id == &worker_a || recipient_id == &worker_b)
+                    && state.items.iter().all(|item| matches!(item, ClusterNode::Worker { .. }))
+        )));
+
+        let state = service.state.as_ref().expect("state exists");
+        let worker_a_partitions = match state.nodes.get(&worker_a).expect("worker a") {
+            Node::Worker { partitions, .. } => partitions.clone(),
+            _ => panic!("unexpected node type"),
+        };
+        let worker_b_partitions = match state.nodes.get(&worker_b).expect("worker b") {
+            Node::Worker { partitions, .. } => partitions.clone(),
+            _ => panic!("unexpected node type"),
+        };
+
+        assert_eq!(worker_a_partitions, vec![0, 2, 4]);
+        assert_eq!(worker_b_partitions, vec![1, 3]);
+    }
+
+    #[tokio::test]
+    async fn node_disconnected_clears_current_leader() {
+        let me = me("11111111-1111-1111-1111-111111111111");
+        let leader = node_id("22222222-2222-2222-2222-222222222222");
+        let (mut service, _config) = service(me);
+        service.state = Some(State {
+            epoch: Some(7),
+            elected_leader_id: Some(leader.clone()),
+            nodes: HashMap::from([(
+                leader.clone(),
+                Node::Manager {
+                    host: "leader.local".to_string(),
+                    port: 9001,
+                    last_heartbeat: 0,
+                },
+            )]),
+            workers_with_calculated_partitions: Default::default(),
+        });
+
+        let mut output = vec![];
+        service
+            .process(
+                NodeProtocol::NodeDisconnected { id: leader.clone() },
+                &mut output,
+            )
+            .await;
+
+        assert!(output.is_empty());
+        let state = service.state.as_ref().unwrap();
+        assert_eq!(state.elected_leader_id, None);
+        assert!(!state.nodes.contains_key(&leader));
     }
 }

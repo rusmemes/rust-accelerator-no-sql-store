@@ -33,4 +33,10 @@ message ClusterState {
   uint64 epoch = 1;
   string leader_id = 2;
   repeated Node nodes = 3;
+  optional Config config = 4;
+}
+
+message Config {
+  uint32 partitions_amount = 1;
+  uint32 replication_factor = 2;
 }
