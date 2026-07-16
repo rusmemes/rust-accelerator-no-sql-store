@@ -5,9 +5,7 @@ use crate::manager::grpc::api::v1::worker_event;
 use crate::manager::grpc::api::v1::{
     Heartbeat, Leader, ManagerEvent, VoteRequest, VoteResponse, WorkerEvent,
 };
-use crate::manager::grpc::common::v1::{
-    node, Addr, ClusterState, Config, GetState, Manager, Node, Worker,
-};
+use crate::manager::grpc::common::v1::{node, Addr, ClusterState, Config, GetState, Manager, Node, Partitions, Worker};
 use crate::manager::grpc::session::{handle_common, ManagerIOStream, WorkerIOStream};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -211,15 +209,23 @@ pub(super) async fn handle_output_cluster_state(
                     host,
                     port,
                     last_heartbeat,
-                    masters,
-                    replicas,
+                    partitions: domain::Partitions {
+                        masters,
+                        replicas,
+                        old_masters,
+                        old_replicas,
+                    },
                 } => Node {
                     payload: Some(node::Payload::Worker(Worker {
                         id: id.to_string(),
                         addr: Some(Addr { host, port }),
                         last_heartbeat,
-                        masters: masters.into_iter().map(|p| p as u32).collect(),
-                        replicas: replicas.into_iter().map(|p| p as u32).collect(),
+                        partitions: Some(Partitions {
+                            masters: masters.into_iter().map(|p| p as u32).collect(),
+                            replicas: replicas.into_iter().map(|p| p as u32).collect(),
+                            old_masters: old_masters.into_iter().map(|p| p as u32).collect(),
+                            old_replicas: old_replicas.into_iter().map(|p| p as u32).collect(),
+                        }),
                     })),
                 },
             })

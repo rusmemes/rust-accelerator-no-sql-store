@@ -1,5 +1,6 @@
 use super::{ManagerService, Node, State};
 use crate::common::{Config, Me, NodeId};
+use crate::manager::service::state::Partitions;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -52,21 +53,53 @@ pub(super) fn worker_node(host: &str, port: u32, last_heartbeat: u64, masters: V
         host: host.to_string(),
         port,
         last_heartbeat,
-        masters,
-        replicas: vec![],
+        partitions: Partitions {
+            masters,
+            old_masters: vec![],
+            replicas: vec![],
+            old_replicas: vec![],
+        },
+    }
+}
+
+pub(super) fn worker_node_with_partitions(
+    host: &str,
+    port: u32,
+    last_heartbeat: u64,
+    partitions: Partitions,
+) -> Node {
+    Node::Worker {
+        host: host.to_string(),
+        port,
+        last_heartbeat,
+        partitions,
     }
 }
 
 pub(super) fn masters_for_worker(state: &State, id: &NodeId) -> Vec<u16> {
     match state.nodes.get(id).expect("worker exists") {
-        Node::Worker { masters, .. } => masters.clone(),
+        Node::Worker { partitions, .. } => partitions.masters.clone(),
         _ => panic!("unexpected node type"),
     }
 }
 
 pub(super) fn replicas_for_worker(state: &State, id: &NodeId) -> Vec<u16> {
     match state.nodes.get(id).expect("worker exists") {
-        Node::Worker { replicas, .. } => replicas.clone(),
+        Node::Worker { partitions, .. } => partitions.replicas.clone(),
+        _ => panic!("unexpected node type"),
+    }
+}
+
+pub(super) fn old_masters_for_worker(state: &State, id: &NodeId) -> Vec<u16> {
+    match state.nodes.get(id).expect("worker exists") {
+        Node::Worker { partitions, .. } => partitions.old_masters.clone(),
+        _ => panic!("unexpected node type"),
+    }
+}
+
+pub(super) fn old_replicas_for_worker(state: &State, id: &NodeId) -> Vec<u16> {
+    match state.nodes.get(id).expect("worker exists") {
+        Node::Worker { partitions, .. } => partitions.old_replicas.clone(),
         _ => panic!("unexpected node type"),
     }
 }

@@ -1,4 +1,4 @@
-use super::{Node, State};
+use super::{state, Node, State};
 use crate::common::{now_millis, Me, NodeId};
 use crate::manager::domain::NodeProtocol;
 
@@ -42,8 +42,12 @@ pub(super) fn handle_new_connection(
                     host,
                     port,
                     last_heartbeat: now_millis(),
-                    masters: vec![], // will be filled on next tick
-                    replicas: vec![], // will be filled on next tick
+                    partitions: state::Partitions {
+                        masters: vec![],
+                        replicas: vec![],
+                        old_masters: vec![],
+                        old_replicas: vec![],
+                    },
                 }
             },
         );

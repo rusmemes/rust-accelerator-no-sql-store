@@ -1,6 +1,8 @@
 use super::{Node, State};
 use crate::common::{Config, NodeId};
+use crate::manager::domain;
 use crate::manager::domain::{ClusterNode, ClusterState, NodeProtocol};
+use crate::manager::service::state::Partitions;
 use tokio::sync::RwLock;
 
 pub(super) fn handle_cluster_state(
@@ -51,13 +53,21 @@ pub(super) fn handle_cluster_state(
                     host,
                     port,
                     last_heartbeat,
-                    masters,
-                    replicas,
+                    partitions: domain::Partitions {
+                        masters,
+                        replicas,
+                        old_masters,
+                        old_replicas,
+                    },
                 } => {
                     if let Some(Node::Worker {
                         last_heartbeat: node_last_heartbeat,
-                        masters: master_partitions,
-                        replicas: replica_partitions,
+                        partitions: Partitions {
+                            masters: master_partitions,
+                            replicas: replica_partitions,
+                            old_masters: old_master_partitions,
+                            old_replicas: old_replica_partitions,
+                        },
                         ..
                     }) = state.nodes.get_mut(&id)
                     {
@@ -67,6 +77,8 @@ pub(super) fn handle_cluster_state(
 
                         *master_partitions = masters;
                         *replica_partitions = replicas;
+                        *old_master_partitions = old_masters;
+                        *old_replica_partitions = old_replicas;
                     } else {
                         state.nodes.insert(
                             id,
@@ -74,8 +86,12 @@ pub(super) fn handle_cluster_state(
                                 host,
                                 port,
                                 last_heartbeat,
-                                masters,
-                                replicas,
+                                partitions: Partitions {
+                                    masters,
+                                    replicas,
+                                    old_masters,
+                                    old_replicas,
+                                },
                             },
                         );
                     }
@@ -93,7 +109,9 @@ pub(super) async fn handle_get_cluster_state(
 ) {
     if let Some((epoch, leader_id)) = state.epoch.zip(state.elected_leader_id.clone()) {
         let guard = config.read().await;
-        let replication_factor = guard.replication_factor.expect("Partitions and replication factor must be set");
+        let replication_factor = guard
+            .replication_factor
+            .expect("Partitions and replication factor must be set");
         output.push(NodeProtocol::ClusterState {
             recipient_id: id.clone(),
             state: ClusterState {
@@ -118,15 +136,24 @@ pub(super) async fn handle_get_cluster_state(
                             host,
                             port,
                             last_heartbeat,
-                            masters,
-                            replicas,
+                            partitions:
+                                Partitions {
+                                    masters,
+                                    replicas,
+                                    old_masters,
+                                    old_replicas,
+                                },
                         } => ClusterNode::Worker {
                             id: id.clone(),
                             host: host.clone(),
                             port: *port,
                             last_heartbeat: *last_heartbeat,
-                            masters: masters.clone(),
-                            replicas: replicas.clone(),
+                            partitions: domain::Partitions {
+                                masters: masters.clone(),
+                                replicas: replicas.clone(),
+                                old_masters: old_masters.clone(),
+                                old_replicas: old_replicas.clone(),
+                            },
                         },
                     })
                     .collect(),

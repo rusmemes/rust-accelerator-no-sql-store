@@ -1,7 +1,7 @@
 use super::*;
 use crate::manager::domain::{self, ClusterNode, NodeProtocol};
 use crate::manager::grpc::api::v1::{worker_event, Leader};
-use crate::manager::grpc::common::v1::{node, Manager, Node, Worker};
+use crate::manager::grpc::common::v1::{node, Manager, Node, Partitions, Worker};
 use crate::manager::grpc::test_support::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -93,8 +93,12 @@ async fn output_routes_cluster_state_to_worker_session_includes_config() {
                 host: "worker.local".to_string(),
                 port: 9100,
                 last_heartbeat: 11,
-                masters: vec![1, 2],
-                replicas: vec![3, 4],
+                partitions: domain::Partitions {
+                    masters: vec![1, 2],
+                    replicas: vec![3, 4],
+                    old_masters: vec![5],
+                    old_replicas: vec![6],
+                },
             },
         ],
         Some(domain::Config {
@@ -133,14 +137,21 @@ async fn output_routes_cluster_state_to_worker_session_includes_config() {
             id,
             addr: Some(Addr { host, port }),
             last_heartbeat,
-            masters,
-            replicas,
+            partitions:
+                Some(Partitions {
+                    masters,
+                    replicas,
+                    old_masters,
+                    old_replicas,
+                }),
         })) if *id == worker_node_id.to_string()
             && host == "worker.local"
             && *port == 9100
             && *last_heartbeat == 11
             && *masters == vec![1, 2]
             && *replicas == vec![3, 4]
+            && *old_masters == vec![5]
+            && *old_replicas == vec![6]
     )));
 
     let _ = me;

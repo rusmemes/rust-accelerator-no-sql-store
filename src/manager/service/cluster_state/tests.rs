@@ -1,6 +1,6 @@
 use super::*;
 use crate::common::now_millis;
-use crate::manager::domain::{ClusterNode, NodeProtocol};
+use crate::manager::domain::{self, ClusterNode, NodeProtocol};
 use crate::manager::service::test_support::*;
 use crate::manager::service::{Node, State};
 use std::collections::HashMap;
@@ -116,14 +116,15 @@ async fn get_cluster_state_returns_worker_items_with_partitions() {
             host,
             port,
             last_heartbeat,
-            masters,
-            replicas,
+            partitions,
         } if id == &worker_id
             && host == "worker.local"
             && *port == 9100
             && *last_heartbeat == now - 5
-            && masters == &vec![4, 2, 9]
-            && replicas.is_empty()
+            && partitions.masters == vec![4, 2, 9]
+            && partitions.replicas.is_empty()
+            && partitions.old_masters.is_empty()
+            && partitions.old_replicas.is_empty()
     ));
     assert_eq!(cluster_state.config.clone().unwrap().replication_factor, 3);
 }
@@ -342,16 +343,24 @@ async fn cluster_state_overwrites_known_worker_partitions_and_adds_unknown_worke
                 host: "worker.local".to_string(),
                 port: 9100,
                 last_heartbeat: now + 10,
-                masters: vec![2, 3, 3, 4],
-                replicas: vec![5, 6],
+                partitions: domain::Partitions {
+                    masters: vec![2, 3, 3, 4],
+                    replicas: vec![5, 6],
+                    old_masters: vec![10],
+                    old_replicas: vec![11],
+                },
             },
             ClusterNode::Worker {
                 id: other_worker.clone(),
                 host: "worker-two.local".to_string(),
                 port: 9101,
                 last_heartbeat: now + 20,
-                masters: vec![7, 8],
-                replicas: vec![9],
+                partitions: domain::Partitions {
+                    masters: vec![7, 8],
+                    replicas: vec![9],
+                    old_masters: vec![12],
+                    old_replicas: vec![13],
+                },
             },
         ],
     );
@@ -364,13 +373,14 @@ async fn cluster_state_overwrites_known_worker_partitions_and_adds_unknown_worke
             host,
             port,
             last_heartbeat,
-            masters,
-            replicas,
+            partitions,
         }) if host == "worker.local"
             && *port == 9100
             && *last_heartbeat == now + 10
-            && masters == &vec![2, 3, 3, 4]
-            && replicas == &vec![5, 6]
+            && partitions.masters == vec![2, 3, 3, 4]
+            && partitions.replicas == vec![5, 6]
+            && partitions.old_masters == vec![10]
+            && partitions.old_replicas == vec![11]
     ));
     assert!(matches!(
         state.nodes.get(&other_worker),
@@ -378,13 +388,14 @@ async fn cluster_state_overwrites_known_worker_partitions_and_adds_unknown_worke
             host,
             port,
             last_heartbeat,
-            masters,
-            replicas,
+            partitions,
         }) if host == "worker-two.local"
             && *port == 9101
             && *last_heartbeat == now + 20
-            && masters == &vec![7, 8]
-            && replicas == &vec![9]
+            && partitions.masters == vec![7, 8]
+            && partitions.replicas == vec![9]
+            && partitions.old_masters == vec![12]
+            && partitions.old_replicas == vec![13]
     ));
 }
 

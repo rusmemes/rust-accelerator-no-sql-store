@@ -1,6 +1,6 @@
-use super::{Node, State};
+use super::{state, Node, State};
 use crate::common::{Me, NodeId};
-use crate::manager::domain::{ClusterNode, ClusterState, NodeProtocol};
+use crate::manager::domain::{ClusterNode, ClusterState, NodeProtocol, Partitions};
 use std::collections::{BTreeSet, HashSet};
 
 const PARTITIONS_AMOUNT: usize = 4096;
@@ -31,28 +31,30 @@ pub(super) fn worker_partitions(
                 .map(|it| it.clone())
                 .collect::<Vec<_>>();
 
-            calculate_and_add_partitions(state, PARTITIONS_AMOUNT, replication_factor, &vec);
-            deduplicate_partitions(state);
+            move_current_partitions_to_old(state);
 
-            let workers_state =
-                create_new_workers_state(state, replication_factor);
+            if !vec.is_empty() {
+                calculate_and_add_partitions(state, PARTITIONS_AMOUNT, replication_factor, &vec);
+                deduplicate_partitions(state);
 
-            state.workers_with_calculated_partitions = vec.into_iter().collect();
+                let workers_state = create_new_workers_state(state, replication_factor);
 
-            for id in state.nodes.keys().filter(|&key| *key != me.id) {
-                output.push(NodeProtocol::ClusterState {
-                    recipient_id: id.clone(),
-                    state: workers_state.clone(),
-                });
+                state.workers_with_calculated_partitions = vec.into_iter().collect();
+
+                for id in state.nodes.keys().filter(|&key| *key != me.id) {
+                    output.push(NodeProtocol::ClusterState {
+                        recipient_id: id.clone(),
+                        state: workers_state.clone(),
+                    });
+                }
+            } else {
+                state.workers_with_calculated_partitions.clear();
             }
         }
     }
 }
 
-fn create_new_workers_state(
-    state: &mut State,
-    replication_factor: usize,
-) -> ClusterState {
+fn create_new_workers_state(state: &mut State, replication_factor: usize) -> ClusterState {
     let items: Vec<ClusterNode> = state
         .nodes
         .iter()
@@ -62,15 +64,18 @@ fn create_new_workers_state(
                 host,
                 port,
                 last_heartbeat,
-                masters,
-                replicas,
+                partitions,
             } => Some(ClusterNode::Worker {
                 id: id.clone(),
                 host: host.clone(),
                 port: *port,
                 last_heartbeat: *last_heartbeat,
-                masters: masters.clone(),
-                replicas: replicas.clone(),
+                partitions: Partitions {
+                    masters: partitions.masters.clone(),
+                    old_masters: partitions.old_masters.clone(),
+                    replicas: partitions.replicas.clone(),
+                    old_replicas: partitions.old_replicas.clone(),
+                },
             }),
         })
         .collect();
@@ -95,11 +100,29 @@ fn deduplicate_partitions(state: &mut State) {
         .values_mut()
         .filter(|node| node.is_worker())
         .for_each(|node| {
-            if let Node::Worker { masters, replicas, .. } = node {
-                masters.retain(|partition| seen.insert(*partition));
+            if let Node::Worker { partitions, .. } = node {
+                retain_unseen(&mut partitions.masters, &mut seen);
+                retain_unseen(&mut partitions.replicas, &mut seen);
+                retain_unseen(&mut partitions.old_masters, &mut seen);
+                retain_unseen(&mut partitions.old_replicas, &mut seen);
                 seen.clear();
-                replicas.retain(|partition| seen.insert(*partition));
-                seen.clear();
+            }
+        });
+}
+
+fn retain_unseen(partitions: &mut Vec<u16>, seen: &mut HashSet<u16>) {
+    partitions.retain(|partition| seen.insert(*partition));
+}
+
+fn move_current_partitions_to_old(state: &mut State) {
+    state
+        .nodes
+        .values_mut()
+        .filter(|node| node.is_worker())
+        .for_each(|node| {
+            if let Node::Worker { partitions, .. } = node {
+                partitions.old_masters.append(&mut partitions.masters);
+                partitions.old_replicas.append(&mut partitions.replicas);
             }
         });
 }
@@ -116,7 +139,14 @@ fn calculate_and_add_partitions(
             let index = calc_replica_index(vec.len(), master_partition_index, replica);
             let id = vec.get(index).unwrap();
             let node = state.nodes.get_mut(id).unwrap();
-            if let Node::Worker { masters, replicas, .. } = node {
+            if let Node::Worker {
+                partitions:
+                    state::Partitions {
+                        masters, replicas, ..
+                    },
+                ..
+            } = node
+            {
                 if replica == 0 {
                     masters.push(partition as u16);
                 } else {

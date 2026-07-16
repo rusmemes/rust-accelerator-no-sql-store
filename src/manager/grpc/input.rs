@@ -5,7 +5,7 @@ use crate::manager::grpc::api::v1::worker_event;
 use crate::manager::grpc::api::v1::{
     Connect, Heartbeat, Leader, ManagerEvent, VoteRequest, VoteResponse, WorkerEvent,
 };
-use crate::manager::grpc::common::v1::{node, Addr, ClusterState, Manager, Worker};
+use crate::manager::grpc::common::v1::{node, Addr, ClusterState, Manager, Partitions, Worker};
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
@@ -163,21 +163,35 @@ pub(super) async fn input_from_manager(
                                             id,
                                             addr: Some(Addr { host, port }),
                                             last_heartbeat,
-                                            masters,
-                                            replicas,
+                                            partitions: Some(Partitions {
+                                                masters,
+                                                replicas,
+                                                old_masters,
+                                                old_replicas,
+                                            }),
                                         })) => Some(ClusterNode::Worker {
                                             id: id.into(),
                                             host,
                                             port,
                                             last_heartbeat,
-                                            masters: masters
-                                                .into_iter()
-                                                .map(|p| p as u16)
-                                                .collect(),
-                                            replicas: replicas
-                                                .into_iter()
-                                                .map(|p| p as u16)
-                                                .collect(),
+                                            partitions: domain::Partitions {
+                                                masters: masters
+                                                    .into_iter()
+                                                    .map(|p| p as u16)
+                                                    .collect(),
+                                                replicas: replicas
+                                                    .into_iter()
+                                                    .map(|p| p as u16)
+                                                    .collect(),
+                                                old_masters: old_masters
+                                                    .into_iter()
+                                                    .map(|p| p as u16)
+                                                    .collect(),
+                                                old_replicas: old_replicas
+                                                    .into_iter()
+                                                    .map(|p| p as u16)
+                                                    .collect(),
+                                            },
                                         }),
                                         _ => None,
                                     })

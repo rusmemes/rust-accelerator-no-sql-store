@@ -58,9 +58,16 @@ pub enum ClusterNode {
         host: String,
         port: u32,
         last_heartbeat: u64,
-        masters: Vec<u16>,
-        replicas: Vec<u16>,
+        partitions: Partitions,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct Partitions {
+    pub masters: Vec<u16>,
+    pub old_masters: Vec<u16>,
+    pub replicas: Vec<u16>,
+    pub old_replicas: Vec<u16>,
 }
 
 #[derive(Debug, Clone)]
