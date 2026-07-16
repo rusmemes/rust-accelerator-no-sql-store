@@ -17,8 +17,6 @@ use crate::{
 use input::{input_from_manager, input_from_worker};
 use manager_connection::new_manager_connection;
 use output::output;
-#[cfg(test)]
-use output::{handle_output_cluster_state, handle_output_heartbeat, handle_output_leader};
 use session::{ManagerIOStream, WorkerIOStream};
 use std::{collections::HashMap, net::AddrParseError, sync::Arc};
 use thiserror::Error;
@@ -248,4 +246,4 @@ pub async fn start_server(
 }
 
 #[cfg(test)]
-mod tests;
+mod test_support;

@@ -71,3 +71,6 @@ pub(super) fn handle_heartbeat(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

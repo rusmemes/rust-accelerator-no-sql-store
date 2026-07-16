@@ -245,3 +245,6 @@ pub(super) async fn input_from_manager(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

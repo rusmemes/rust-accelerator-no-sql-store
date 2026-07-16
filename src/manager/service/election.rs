@@ -210,3 +210,6 @@ pub(super) fn handle_vote_request(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

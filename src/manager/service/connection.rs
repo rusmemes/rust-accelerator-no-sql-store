@@ -51,3 +51,6 @@ pub(super) fn handle_new_connection(
         tracing::info!("State: {:?}", state);
     }
 }
+
+#[cfg(test)]
+mod tests;

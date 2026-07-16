@@ -134,3 +134,6 @@ pub(super) async fn handle_get_cluster_state(
         });
     }
 }
+
+#[cfg(test)]
+mod tests;

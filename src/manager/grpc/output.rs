@@ -293,3 +293,6 @@ pub(super) async fn handle_output_heartbeat(
     )
     .await;
 }
+
+#[cfg(test)]
+mod tests;

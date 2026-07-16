@@ -144,3 +144,6 @@ fn calc_replica_index(
     }
     index
 }
+
+#[cfg(test)]
+mod tests;

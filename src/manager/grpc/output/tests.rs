@@ -1,47 +1,11 @@
 use super::*;
-use crate::manager::domain;
-use crate::manager::domain::ClusterNode;
-use crate::manager::grpc::api::v1::{worker_event, Heartbeat, Leader};
-use crate::manager::grpc::common::v1::{node, GetState, Manager, Node, Worker};
+use crate::manager::domain::{self, ClusterNode, NodeProtocol};
+use crate::manager::grpc::api::v1::{worker_event, Leader};
+use crate::manager::grpc::common::v1::{node, Manager, Node, Worker};
+use crate::manager::grpc::test_support::*;
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::RwLock;
-use tokio::time::timeout;
-use tokio_stream::wrappers::ReceiverStream;
-
-fn node_id(id: &str) -> NodeId {
-    NodeId::from_string(id)
-}
-
-fn me(id: &str) -> Arc<Me> {
-    Arc::new(Me {
-        id: node_id(id),
-        host: "127.0.0.1".to_string(),
-        port: 7000,
-    })
-}
-
-fn manager_output_sender() -> (Sender<ManagerEvent>, Receiver<ManagerEvent>) {
-    tokio::sync::mpsc::channel(4)
-}
-
-fn worker_output_sender() -> (Sender<WorkerEvent>, Receiver<WorkerEvent>) {
-    tokio::sync::mpsc::channel(4)
-}
-
-fn manager_session(
-    id: &NodeId,
-    stream: ManagerIOStream,
-) -> Arc<RwLock<HashMap<NodeId, ManagerIOStream>>> {
-    Arc::new(RwLock::new(HashMap::from([(id.clone(), stream)])))
-}
-
-fn worker_session(
-    id: &NodeId,
-    stream: WorkerIOStream,
-) -> Arc<RwLock<HashMap<NodeId, WorkerIOStream>>> {
-    Arc::new(RwLock::new(HashMap::from([(id.clone(), stream)])))
-}
 
 #[tokio::test]
 async fn output_routes_leader_to_worker_session() {
@@ -262,81 +226,4 @@ async fn output_removes_closed_manager_session() {
         rx.recv().await.expect("protocol message"),
         NodeProtocol::NodeDisconnected { id } if id == manager_id
     ));
-}
-
-#[tokio::test]
-async fn input_from_worker_forwards_messages_and_stops_when_stream_ends() {
-    let worker_id = node_id("22222222-2222-2222-2222-222222222222");
-    let (protocol_tx, mut protocol_rx) = tokio::sync::mpsc::channel(8);
-    let (request_tx, request_rx) = tokio::sync::mpsc::channel(4);
-    let stream = ReceiverStream::new(request_rx);
-    let worker_id_clone = worker_id.clone();
-    let worker_task = tokio::spawn(async move {
-        input_from_worker(
-            stream,
-            &worker_id_clone,
-            "worker.local".to_string(),
-            9100,
-            protocol_tx,
-        )
-        .await;
-    });
-
-    let new_connection = timeout(Duration::from_secs(1), protocol_rx.recv())
-        .await
-        .expect("new connection timeout")
-        .expect("new connection");
-    assert!(matches!(
-        new_connection,
-        NodeProtocol::NewConnection {
-            id: Some(id),
-            host,
-            port,
-            manager: false,
-        } if id == worker_id && host == "worker.local" && port == 9100
-    ));
-
-    request_tx
-        .send(Ok(WorkerEvent {
-            payload: Some(worker_event::Payload::Heartbeat(Heartbeat {
-                id: worker_id.to_string(),
-                ts: 44,
-            })),
-        }))
-        .await
-        .expect("heartbeat message");
-
-    request_tx
-        .send(Ok(WorkerEvent {
-            payload: Some(worker_event::Payload::GetClusterState(GetState {})),
-        }))
-        .await
-        .expect("cluster state message");
-    drop(request_tx);
-
-    let heartbeat = timeout(Duration::from_secs(1), protocol_rx.recv())
-        .await
-        .expect("heartbeat timeout")
-        .expect("heartbeat");
-    assert!(matches!(
-        heartbeat,
-        NodeProtocol::Heartbeat {
-            recipient_id,
-            heartbeat: domain::Heartbeat { id, ts },
-        } if recipient_id == worker_id && id == worker_id && ts == 44
-    ));
-
-    let get_cluster_state = timeout(Duration::from_secs(1), protocol_rx.recv())
-        .await
-        .expect("cluster state timeout")
-        .expect("cluster state");
-    assert!(matches!(
-        get_cluster_state,
-        NodeProtocol::GetClusterState { id } if id == worker_id
-    ));
-
-    timeout(Duration::from_secs(1), worker_task)
-        .await
-        .expect("worker task timeout")
-        .expect("worker task");
 }
