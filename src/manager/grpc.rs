@@ -114,16 +114,11 @@ impl ManagerApi for ManagerApiService {
                     Some(Payload::Connect(Connect {
                         id,
                         addr: Some(Addr { host, port }),
-                        config:
-                            Some(Config {
-                                partitions_amount,
-                                replication_factor,
-                            }),
+                        config: Some(Config { replication_factor}),
                     })),
             })) = input_stream.message().await
             {
                 let mut guard = config.write().await;
-                guard.partitions_amount = Some(partitions_amount as usize);
                 guard.replication_factor = Some(replication_factor as usize);
                 drop(guard);
 

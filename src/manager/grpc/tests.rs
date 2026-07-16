@@ -133,7 +133,6 @@ async fn output_routes_cluster_state_to_worker_session_includes_config() {
             },
         ],
         Some(domain::Config {
-            partitions_amount: 12,
             replication_factor: 4,
         }),
     )
@@ -147,10 +146,6 @@ async fn output_routes_cluster_state_to_worker_session_includes_config() {
 
     assert_eq!(cluster_state.epoch, 5);
     assert_eq!(cluster_state.leader_id, manager_node_id.to_string());
-    assert_eq!(
-        cluster_state.config.as_ref().map(|c| c.partitions_amount),
-        Some(12)
-    );
     assert_eq!(
         cluster_state.config.as_ref().map(|c| c.replication_factor),
         Some(4)
@@ -208,7 +203,6 @@ async fn output_routes_cluster_state_to_manager_session_includes_config() {
             last_heartbeat: 77,
         }],
         Some(domain::Config {
-            partitions_amount: 8,
             replication_factor: 2,
         }),
     )
@@ -222,10 +216,6 @@ async fn output_routes_cluster_state_to_manager_session_includes_config() {
 
     assert_eq!(cluster_state.epoch, 2);
     assert_eq!(cluster_state.leader_id, me.id.to_string());
-    assert_eq!(
-        cluster_state.config.as_ref().map(|c| c.partitions_amount),
-        Some(8)
-    );
     assert_eq!(
         cluster_state.config.as_ref().map(|c| c.replication_factor),
         Some(2)

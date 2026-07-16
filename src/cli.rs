@@ -1,5 +1,17 @@
 use clap_derive::{Args, Parser, Subcommand};
 
+fn parse_replication_factor(value: &str) -> Result<usize, String> {
+    let value = value
+        .parse::<usize>()
+        .map_err(|_| "replication_factor must be a positive integer".to_string())?;
+
+    if value == 0 {
+        Err("replication_factor must be at least 1".to_string())
+    } else {
+        Ok(value)
+    }
+}
+
 #[derive(Args)]
 pub struct CommonArgs {
     #[arg(long)]
@@ -29,11 +41,12 @@ pub enum Command {
 
         #[arg(long, requires = "manager_host")]
         manager_port: Option<u16>,
-
-        #[arg(long, default_value = "4096")]
-        partitions_amount: usize,
         
-        #[arg(long, default_value = "3")]
+        #[arg(
+            long,
+            default_value_t = 3,
+            value_parser = parse_replication_factor
+        )]
         replication_factor: usize,
     },
 

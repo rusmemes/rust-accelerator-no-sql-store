@@ -72,6 +72,5 @@ pub struct ClusterState {
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub partitions_amount: usize,
     pub replication_factor: usize,
 }

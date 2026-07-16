@@ -3,11 +3,12 @@ use crate::common::{Me, NodeId};
 use crate::manager::domain::{ClusterNode, ClusterState, NodeProtocol};
 use std::collections::{BTreeSet, HashSet};
 
+const PARTITIONS_AMOUNT: usize = 4096;
+
 pub(super) fn worker_partitions(
     state: &mut State,
     output: &mut Vec<NodeProtocol>,
     me: &Me,
-    partitions_amount: usize,
     replication_factor: usize,
 ) {
     if state.elected_leader_id.as_ref() == Some(&me.id) {
@@ -30,11 +31,11 @@ pub(super) fn worker_partitions(
                 .map(|it| it.clone())
                 .collect::<Vec<_>>();
 
-            calculate_and_add_partitions(state, partitions_amount, replication_factor, &vec);
+            calculate_and_add_partitions(state, PARTITIONS_AMOUNT, replication_factor, &vec);
             deduplicate_partitions(state);
 
             let workers_state =
-                create_new_workers_state(state, partitions_amount, replication_factor);
+                create_new_workers_state(state, replication_factor);
 
             state.workers_with_calculated_partitions = vec.into_iter().collect();
 
@@ -50,7 +51,6 @@ pub(super) fn worker_partitions(
 
 fn create_new_workers_state(
     state: &mut State,
-    partitions_amount: usize,
     replication_factor: usize,
 ) -> ClusterState {
     let items: Vec<ClusterNode> = state
@@ -74,10 +74,7 @@ fn create_new_workers_state(
         .collect();
 
     ClusterState {
-        config: Some(crate::manager::domain::Config {
-            partitions_amount,
-            replication_factor,
-        }),
+        config: Some(crate::manager::domain::Config { replication_factor }),
         epoch: state
             .epoch
             .expect("present as elected leader id is also present"),

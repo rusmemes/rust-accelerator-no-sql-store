@@ -37,6 +37,5 @@ message ClusterState {
 }
 
 message Config {
-  uint32 partitions_amount = 1;
-  uint32 replication_factor = 2;
+  uint32 replication_factor = 1;
 }
