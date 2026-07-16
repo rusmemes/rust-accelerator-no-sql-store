@@ -11,7 +11,7 @@ service ManagerApi {
 message Connect {
   string id = 1;
   common.v1.Addr addr = 2;
-  common.v1.Config config = 3;
+  optional common.v1.Config config = 3;
 }
 
 message ConnectResponse {
