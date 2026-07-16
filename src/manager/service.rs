@@ -1,4 +1,4 @@
-use crate::common::{now_millis, Config, Me, NodeId};
+use crate::common::{now_millis, Config, Me};
 use crate::manager::domain::{ClusterState, Heartbeat, NodeProtocol};
 use cluster_state::{handle_cluster_state, handle_get_cluster_state};
 use connection::{handle_new_connection, handle_node_disconnected};
@@ -8,7 +8,6 @@ use election::{
 use heartbeat::{handle_heartbeat, heartbeats};
 use partitions::worker_partitions;
 use rand::random_range;
-use std::collections::BTreeSet;
 use std::ops::Range;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -27,46 +26,9 @@ mod connection;
 mod election;
 mod heartbeat;
 mod partitions;
+mod state;
 
-#[derive(Debug)]
-enum Node {
-    Manager {
-        host: String,
-        port: u32,
-        last_heartbeat: u64,
-    },
-    Worker {
-        host: String,
-        port: u32,
-        last_heartbeat: u64,
-        partitions: Vec<u16>,
-    },
-}
-
-impl Node {
-    fn is_manager(&self) -> bool {
-        matches!(self, Node::Manager { .. })
-    }
-
-    fn is_worker(&self) -> bool {
-        matches!(self, Node::Worker { .. })
-    }
-
-    fn last_heartbeat_mut(&mut self) -> &mut u64 {
-        match self {
-            Node::Manager { last_heartbeat, .. } => last_heartbeat,
-            Node::Worker { last_heartbeat, .. } => last_heartbeat,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct State {
-    epoch: Option<u64>,
-    elected_leader_id: Option<NodeId>,
-    nodes: HashMap<NodeId, Node>,
-    workers_with_calculated_partitions: BTreeSet<NodeId>,
-}
+use state::{Node, State};
 
 // to make nodes trying to start elections at different times, we randomize the election timeout interval
 // so that the elections are not all started at the same time

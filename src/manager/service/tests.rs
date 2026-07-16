@@ -1,4 +1,5 @@
 use super::*;
+use crate::common::NodeId;
 use crate::manager::domain::ClusterNode;
 use std::collections::HashSet;
 use std::sync::Arc;
