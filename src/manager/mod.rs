@@ -11,6 +11,7 @@ use crate::manager::service::start_service;
 use std::sync::Arc;
 use tokio::select;
 use tokio::signal::unix::{signal, SignalKind};
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 mod grpc;
@@ -27,19 +28,22 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let mut sigterm = signal(SignalKind::terminate()).expect("SIGTERM handler");
     let mut sigint = signal(SignalKind::interrupt()).expect("SIGINT handler");
 
-    let (to_gprc, from_manager) = tokio::sync::mpsc::channel(100);
-    let (to_manager, from_grpc) = tokio::sync::mpsc::channel(100);
+    const CHANNEL_BUFFER_SIZE: usize = 100;
+    let (to_gprc, from_manager) = tokio::sync::mpsc::channel(CHANNEL_BUFFER_SIZE);
+    let (to_manager, from_grpc) = tokio::sync::mpsc::channel(CHANNEL_BUFFER_SIZE);
 
     let (host, port) = &config.self_host_port;
-    let me = Arc::new(Me::new(host.to_string(), *port as u32));
+    let me = Arc::new(Me::new(host.clone(), *port as u32));
 
     tracing::info!("Starting manager {:?}", me);
+    
+    let config = Arc::new(RwLock::new(config));
 
     let cancellation_token = CancellationToken::new();
     let grpc_join_handle = start_server(
+        config.clone(),
         me.clone(),
         (to_manager, from_manager),
-        config.grpc_port,
         cancellation_token.child_token(),
     );
 

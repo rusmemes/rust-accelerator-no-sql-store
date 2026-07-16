@@ -2,21 +2,41 @@ syntax = "proto3";
 
 package common.v1;
 
-message GetClusterState {}
+message GetState {}
 
 message Addr {
   string host = 1;
   uint32 port = 2;
 }
 
-message ClusterStateItem {
+message Manager {
   string id = 1;
   Addr addr = 2;
   uint64 last_heartbeat = 3;
 }
 
+message Worker {
+  string id = 1;
+  Addr addr = 2;
+  uint64 last_heartbeat = 3;
+  repeated uint32 partitions = 4;
+}
+
+message Node {
+  oneof payload {
+      Manager manager = 1;
+      Worker worker = 2;
+  }
+}
+
 message ClusterState {
   uint64 epoch = 1;
   string leader_id = 2;
-  repeated ClusterStateItem items = 3;
+  repeated Node nodes = 3;
+  optional Config config = 4;
+}
+
+message Config {
+  uint32 partitions_amount = 1;
+  uint32 replication_factor = 2;
 }

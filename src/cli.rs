@@ -29,6 +29,12 @@ pub enum Command {
 
         #[arg(long, requires = "manager_host")]
         manager_port: Option<u16>,
+
+        #[arg(long, default_value = "4096")]
+        partitions_amount: usize,
+        
+        #[arg(long, default_value = "3")]
+        replication_factor: usize,
     },
 
     Worker {

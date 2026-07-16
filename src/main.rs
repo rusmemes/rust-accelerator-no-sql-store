@@ -4,6 +4,7 @@ use clap::Parser;
 mod cli;
 mod common;
 mod manager;
+mod worker;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -13,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
 
     match &cli.command {
         Command::Manager { .. } => manager::run(cli.into()).await?,
-        Command::Worker { .. } => {},
+        Command::Worker { .. } => worker::run(cli.into()).await?,
     }
 
     Ok(())
