@@ -1,5 +1,8 @@
 use super::*;
-use crate::manager::grpc::api::v1::worker_event;
+use crate::manager::domain;
+use crate::manager::domain::ClusterNode;
+use crate::manager::grpc::api::v1::{worker_event, Heartbeat, Leader};
+use crate::manager::grpc::common::v1::{node, GetState, Manager, Node, Worker};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -144,8 +147,14 @@ async fn output_routes_cluster_state_to_worker_session_includes_config() {
 
     assert_eq!(cluster_state.epoch, 5);
     assert_eq!(cluster_state.leader_id, manager_node_id.to_string());
-    assert_eq!(cluster_state.config.as_ref().map(|c| c.partitions_amount), Some(12));
-    assert_eq!(cluster_state.config.as_ref().map(|c| c.replication_factor), Some(4));
+    assert_eq!(
+        cluster_state.config.as_ref().map(|c| c.partitions_amount),
+        Some(12)
+    );
+    assert_eq!(
+        cluster_state.config.as_ref().map(|c| c.replication_factor),
+        Some(4)
+    );
     assert_eq!(cluster_state.nodes.len(), 2);
     assert!(cluster_state.nodes.iter().any(|node| matches!(
         &node.payload,
@@ -213,8 +222,14 @@ async fn output_routes_cluster_state_to_manager_session_includes_config() {
 
     assert_eq!(cluster_state.epoch, 2);
     assert_eq!(cluster_state.leader_id, me.id.to_string());
-    assert_eq!(cluster_state.config.as_ref().map(|c| c.partitions_amount), Some(8));
-    assert_eq!(cluster_state.config.as_ref().map(|c| c.replication_factor), Some(2));
+    assert_eq!(
+        cluster_state.config.as_ref().map(|c| c.partitions_amount),
+        Some(8)
+    );
+    assert_eq!(
+        cluster_state.config.as_ref().map(|c| c.replication_factor),
+        Some(2)
+    );
     assert_eq!(cluster_state.nodes.len(), 1);
     assert!(matches!(
         cluster_state.nodes.as_slice(),
