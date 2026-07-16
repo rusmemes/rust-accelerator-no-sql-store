@@ -61,14 +61,12 @@ impl ManagerService {
             heartbeats(state, output, &self.me);
             start_election_if_needed(state, &mut self.elections, &self.me, output);
             let config = self.config.read().await;
-            let partitions_amount = config.partitions_amount.expect("required and has default");
             let replication_factor = config.replication_factor.expect("required and has default");
             drop(config);
             worker_partitions(
                 state,
                 output,
                 &self.me,
-                partitions_amount,
                 replication_factor,
             );
         }

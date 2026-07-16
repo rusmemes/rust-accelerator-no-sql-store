@@ -56,7 +56,6 @@ pub struct Config {
     pub grpc_port: u16,
     pub self_host_port: (String, u16),
     pub manager_host_port: Option<(String, u16)>,
-    pub partitions_amount: Option<usize>,
     pub replication_factor: Option<usize>,
 }
 
@@ -67,13 +66,11 @@ impl From<Cli> for Config {
                 common,
                 manager_host,
                 manager_port,
-                partitions_amount,
                 replication_factor,
             } => Config {
                 grpc_port: common.grpc_port,
                 self_host_port: (common.self_host.clone(), common.self_port()),
                 manager_host_port: manager_host.zip(manager_port),
-                partitions_amount: Some(partitions_amount),
                 replication_factor: Some(replication_factor),
             },
             Command::Worker {
@@ -84,7 +81,6 @@ impl From<Cli> for Config {
                 grpc_port: common.grpc_port,
                 self_host_port: (common.self_host.clone(), common.self_port()),
                 manager_host_port: Some((manager_host, manager_port)),
-                partitions_amount: None,
                 replication_factor: None,
             },
         }

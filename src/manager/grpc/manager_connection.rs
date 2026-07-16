@@ -20,7 +20,6 @@ pub(super) async fn new_manager_connection(
     sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
     host: String,
     port: u32,
-    partitions_amount: usize,
     replication_factor: usize,
 ) {
     let client = ManagerApiClient::connect(format!("http://{host}:{port}")).await;
@@ -43,7 +42,6 @@ pub(super) async fn new_manager_connection(
                         port,
                         grpc_output,
                         response,
-                        partitions_amount,
                         replication_factor,
                     )
                     .await;
@@ -67,7 +65,6 @@ async fn start_communication_with_manager(
     port: u32,
     grpc_output: Sender<ManagerEvent>,
     response: Response<Streaming<ManagerEvent>>,
-    partitions_amount: usize,
     replication_factor: usize,
 ) {
     let mut input_stream = response.into_inner();
@@ -81,7 +78,6 @@ async fn start_communication_with_manager(
                     port: me.port,
                 }),
                 config: Some(Config {
-                    partitions_amount: partitions_amount as u32,
                     replication_factor: replication_factor as u32,
                 }),
             })),

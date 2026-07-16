@@ -38,10 +38,7 @@ pub(super) async fn output(
                 manager,
             } => {
                 let guard = config.read().await;
-                let (partitions_amount, replication_factor) = guard
-                    .partitions_amount
-                    .zip(guard.replication_factor)
-                    .expect("Partitions and replication factor should be defined");
+                let replication_factor = guard.replication_factor.expect("Partitions and replication factor should be defined");
                 drop(guard);
                 if manager {
                     super::new_manager_connection(
@@ -50,7 +47,6 @@ pub(super) async fn output(
                         &manager_sessions,
                         host,
                         port,
-                        partitions_amount,
                         replication_factor,
                     )
                     .await;
@@ -227,7 +223,6 @@ pub(super) async fn handle_output_cluster_state(
             })
             .collect(),
         config: config.map(|config| Config {
-            partitions_amount: config.partitions_amount as u32,
             replication_factor: config.replication_factor as u32,
         }),
     };

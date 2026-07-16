@@ -89,17 +89,11 @@ pub(super) async fn handle_get_cluster_state(
 ) {
     if let Some((epoch, leader_id)) = state.epoch.zip(state.elected_leader_id.clone()) {
         let guard = config.read().await;
-        let (pa, rf) = guard
-            .partitions_amount
-            .zip(guard.replication_factor)
-            .expect("Partitions and replication factor must be set");
+        let replication_factor = guard.replication_factor.expect("Partitions and replication factor must be set");
         output.push(NodeProtocol::ClusterState {
             recipient_id: id.clone(),
             state: ClusterState {
-                config: Some(crate::manager::domain::Config {
-                    partitions_amount: pa,
-                    replication_factor: rf,
-                }),
+                config: Some(crate::manager::domain::Config { replication_factor }),
                 epoch,
                 leader_id,
                 items: state
