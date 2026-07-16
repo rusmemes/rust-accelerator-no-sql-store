@@ -19,7 +19,8 @@ message Worker {
   string id = 1;
   Addr addr = 2;
   uint64 last_heartbeat = 3;
-  repeated uint32 partitions = 4;
+  repeated uint32 masters = 4;
+  repeated uint32 replicas = 5;
 }
 
 message Node {

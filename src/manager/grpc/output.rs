@@ -211,13 +211,15 @@ pub(super) async fn handle_output_cluster_state(
                     host,
                     port,
                     last_heartbeat,
-                    partitions,
+                    masters,
+                    replicas,
                 } => Node {
                     payload: Some(node::Payload::Worker(Worker {
                         id: id.to_string(),
                         addr: Some(Addr { host, port }),
                         last_heartbeat,
-                        partitions: partitions.into_iter().map(|p| p as u32).collect(),
+                        masters: masters.into_iter().map(|p| p as u32).collect(),
+                        replicas: replicas.into_iter().map(|p| p as u32).collect(),
                     })),
                 },
             })

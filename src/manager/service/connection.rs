@@ -42,7 +42,8 @@ pub(super) fn handle_new_connection(
                     host,
                     port,
                     last_heartbeat: now_millis(),
-                    partitions: vec![], // will be filled on next tick
+                    masters: vec![], // will be filled on next tick
+                    replicas: vec![], // will be filled on next tick
                 }
             },
         );

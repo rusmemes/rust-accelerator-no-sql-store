@@ -129,7 +129,8 @@ async fn output_routes_cluster_state_to_worker_session_includes_config() {
                 host: "worker.local".to_string(),
                 port: 9100,
                 last_heartbeat: 11,
-                partitions: vec![1, 2],
+                masters: vec![1, 2],
+                replicas: vec![3, 4],
             },
         ],
         Some(domain::Config {
@@ -168,12 +169,14 @@ async fn output_routes_cluster_state_to_worker_session_includes_config() {
             id,
             addr: Some(Addr { host, port }),
             last_heartbeat,
-            partitions,
+            masters,
+            replicas,
         })) if *id == worker_node_id.to_string()
             && host == "worker.local"
             && *port == 9100
             && *last_heartbeat == 11
-            && *partitions == vec![1, 2]
+            && *masters == vec![1, 2]
+            && *replicas == vec![3, 4]
     )));
 
     let _ = me;

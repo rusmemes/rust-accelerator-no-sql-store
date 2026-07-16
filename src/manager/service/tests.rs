@@ -49,18 +49,26 @@ fn node(host: &str, port: u32, last_heartbeat: u64) -> Node {
     }
 }
 
-fn worker_node(host: &str, port: u32, last_heartbeat: u64, partitions: Vec<u16>) -> Node {
+fn worker_node(host: &str, port: u32, last_heartbeat: u64, masters: Vec<u16>) -> Node {
     Node::Worker {
         host: host.to_string(),
         port,
         last_heartbeat,
-        partitions,
+        masters,
+        replicas: vec![],
     }
 }
 
-fn partitions_for_worker(state: &State, id: &NodeId) -> Vec<u16> {
+fn masters_for_worker(state: &State, id: &NodeId) -> Vec<u16> {
     match state.nodes.get(id).expect("worker exists") {
-        Node::Worker { partitions, .. } => partitions.clone(),
+        Node::Worker { masters, .. } => masters.clone(),
+        _ => panic!("unexpected node type"),
+    }
+}
+
+fn replicas_for_worker(state: &State, id: &NodeId) -> Vec<u16> {
+    match state.nodes.get(id).expect("worker exists") {
+        Node::Worker { replicas, .. } => replicas.clone(),
         _ => panic!("unexpected node type"),
     }
 }
@@ -249,12 +257,14 @@ async fn get_cluster_state_returns_worker_items_with_partitions() {
             host,
             port,
             last_heartbeat,
-            partitions,
+            masters,
+            replicas,
         } if id == &worker_id
             && host == "worker.local"
             && *port == 9100
             && *last_heartbeat == now - 5
-            && partitions == &vec![4, 2, 9]
+            && masters == &vec![4, 2, 9]
+            && replicas.is_empty()
     ));
     assert_eq!(cluster_state.config.clone().unwrap().replication_factor, 3);
 }
@@ -889,14 +899,16 @@ async fn cluster_state_overwrites_known_worker_partitions_and_adds_unknown_worke
                 host: "worker.local".to_string(),
                 port: 9100,
                 last_heartbeat: now + 10,
-                partitions: vec![2, 3, 3, 4],
+                masters: vec![2, 3, 3, 4],
+                replicas: vec![5, 6],
             },
             ClusterNode::Worker {
                 id: other_worker.clone(),
                 host: "worker-two.local".to_string(),
                 port: 9101,
                 last_heartbeat: now + 20,
-                partitions: vec![7, 8],
+                masters: vec![7, 8],
+                replicas: vec![9],
             },
         ],
     );
@@ -909,11 +921,13 @@ async fn cluster_state_overwrites_known_worker_partitions_and_adds_unknown_worke
             host,
             port,
             last_heartbeat,
-            partitions,
+            masters,
+            replicas,
         }) if host == "worker.local"
             && *port == 9100
             && *last_heartbeat == now + 10
-            && partitions == &vec![2, 3, 3, 4]
+            && masters == &vec![2, 3, 3, 4]
+            && replicas == &vec![5, 6]
     ));
     assert!(matches!(
         state.nodes.get(&other_worker),
@@ -921,11 +935,13 @@ async fn cluster_state_overwrites_known_worker_partitions_and_adds_unknown_worke
             host,
             port,
             last_heartbeat,
-            partitions,
+            masters,
+            replicas,
         }) if host == "worker-two.local"
             && *port == 9101
             && *last_heartbeat == now + 20
-            && partitions == &vec![7, 8]
+            && masters == &vec![7, 8]
+            && replicas == &vec![9]
     ));
 }
 
@@ -1388,20 +1404,27 @@ async fn tick_recomputes_worker_partitions_and_broadcasts_cluster_state() {
     )));
 
     let state = service.state.as_ref().expect("state exists");
-    let worker_a_partitions = match state.nodes.get(&worker_a).expect("worker a") {
-        Node::Worker { partitions, .. } => partitions.clone(),
-        _ => panic!("unexpected node type"),
-    };
-    let worker_b_partitions = match state.nodes.get(&worker_b).expect("worker b") {
-        Node::Worker { partitions, .. } => partitions.clone(),
-        _ => panic!("unexpected node type"),
-    };
-
-    let expected_partitions = (0..TEST_PARTITIONS_AMOUNT)
+    let expected_worker_a_masters = (0..TEST_PARTITIONS_AMOUNT)
+        .filter(|partition| partition % 2 == 0)
         .map(|partition| partition as u16)
         .collect::<Vec<_>>();
-    assert_eq!(worker_a_partitions, expected_partitions);
-    assert_eq!(worker_b_partitions, expected_partitions);
+    let expected_worker_b_masters = (0..TEST_PARTITIONS_AMOUNT)
+        .filter(|partition| partition % 2 == 1)
+        .map(|partition| partition as u16)
+        .collect::<Vec<_>>();
+    let expected_replicas = (0..TEST_PARTITIONS_AMOUNT)
+        .map(|partition| partition as u16)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        masters_for_worker(state, &worker_a),
+        expected_worker_a_masters
+    );
+    assert_eq!(
+        masters_for_worker(state, &worker_b),
+        expected_worker_b_masters
+    );
+    assert_eq!(replicas_for_worker(state, &worker_a), expected_replicas);
+    assert_eq!(replicas_for_worker(state, &worker_b), expected_replicas);
 }
 
 #[tokio::test]
@@ -1439,14 +1462,14 @@ async fn tick_keeps_partitions_from_previous_worker_layouts() {
     {
         let state = service.state.as_ref().expect("state exists");
         assert_eq!(
-            partitions_for_worker(state, &worker_a),
+            masters_for_worker(state, &worker_a),
             (0..TEST_PARTITIONS_AMOUNT)
                 .filter(|partition| partition % 2 == 0)
                 .map(|partition| partition as u16)
                 .collect::<Vec<_>>()
         );
         assert_eq!(
-            partitions_for_worker(state, &worker_b),
+            masters_for_worker(state, &worker_b),
             (0..TEST_PARTITIONS_AMOUNT)
                 .filter(|partition| partition % 2 == 1)
                 .map(|partition| partition as u16)
@@ -1465,16 +1488,18 @@ async fn tick_keeps_partitions_from_previous_worker_layouts() {
     assert_eq!(output.len(), 3);
     let expected_worker_a_partitions = (0..TEST_PARTITIONS_AMOUNT)
         .filter(|partition| partition % 2 == 0)
-        .chain((0..TEST_PARTITIONS_AMOUNT).filter(|partition| {
-            partition % 3 == 0 && partition % 2 == 1
-        }))
+        .chain(
+            (0..TEST_PARTITIONS_AMOUNT)
+                .filter(|partition| partition % 3 == 0 && partition % 2 == 1),
+        )
         .map(|partition| partition as u16)
         .collect::<Vec<_>>();
     let expected_worker_b_partitions = (0..TEST_PARTITIONS_AMOUNT)
         .filter(|partition| partition % 2 == 1)
-        .chain((0..TEST_PARTITIONS_AMOUNT).filter(|partition| {
-            partition % 3 == 1 && partition % 2 == 0
-        }))
+        .chain(
+            (0..TEST_PARTITIONS_AMOUNT)
+                .filter(|partition| partition % 3 == 1 && partition % 2 == 0),
+        )
         .map(|partition| partition as u16)
         .collect::<Vec<_>>();
     let expected_worker_c_partitions = (0..TEST_PARTITIONS_AMOUNT)
@@ -1489,34 +1514,43 @@ async fn tick_keeps_partitions_from_previous_worker_layouts() {
                 || recipient_id == &worker_c)
                 && state.items.iter().any(|item| matches!(
                     item,
-                    ClusterNode::Worker { id, partitions, .. }
-                        if id == &worker_a && partitions == &expected_worker_a_partitions
+                    ClusterNode::Worker { id, masters, replicas, .. }
+                        if id == &worker_a
+                            && masters == &expected_worker_a_partitions
+                            && replicas.is_empty()
                 ))
                 && state.items.iter().any(|item| matches!(
                     item,
-                    ClusterNode::Worker { id, partitions, .. }
-                        if id == &worker_b && partitions == &expected_worker_b_partitions
+                    ClusterNode::Worker { id, masters, replicas, .. }
+                        if id == &worker_b
+                            && masters == &expected_worker_b_partitions
+                            && replicas.is_empty()
                 ))
                 && state.items.iter().any(|item| matches!(
                     item,
-                    ClusterNode::Worker { id, partitions, .. }
-                        if id == &worker_c && partitions == &expected_worker_c_partitions
+                    ClusterNode::Worker { id, masters, replicas, .. }
+                        if id == &worker_c
+                            && masters == &expected_worker_c_partitions
+                            && replicas.is_empty()
                 ))
     )));
 
     let state = service.state.as_ref().expect("state exists");
     assert_eq!(
-        partitions_for_worker(state, &worker_a),
+        masters_for_worker(state, &worker_a),
         expected_worker_a_partitions
     );
     assert_eq!(
-        partitions_for_worker(state, &worker_b),
+        masters_for_worker(state, &worker_b),
         expected_worker_b_partitions
     );
     assert_eq!(
-        partitions_for_worker(state, &worker_c),
+        masters_for_worker(state, &worker_c),
         expected_worker_c_partitions
     );
+    assert!(replicas_for_worker(state, &worker_a).is_empty());
+    assert!(replicas_for_worker(state, &worker_b).is_empty());
+    assert!(replicas_for_worker(state, &worker_c).is_empty());
 }
 
 #[tokio::test]

@@ -163,13 +163,18 @@ pub(super) async fn input_from_manager(
                                             id,
                                             addr: Some(Addr { host, port }),
                                             last_heartbeat,
-                                            partitions,
+                                            masters,
+                                            replicas,
                                         })) => Some(ClusterNode::Worker {
                                             id: id.into(),
                                             host,
                                             port,
                                             last_heartbeat,
-                                            partitions: partitions
+                                            masters: masters
+                                                .into_iter()
+                                                .map(|p| p as u16)
+                                                .collect(),
+                                            replicas: replicas
                                                 .into_iter()
                                                 .map(|p| p as u16)
                                                 .collect(),

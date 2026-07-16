@@ -58,7 +58,8 @@ pub enum ClusterNode {
         host: String,
         port: u32,
         last_heartbeat: u64,
-        partitions: Vec<u16>,
+        masters: Vec<u16>,
+        replicas: Vec<u16>,
     },
 }
 

@@ -51,11 +51,13 @@ pub(super) fn handle_cluster_state(
                     host,
                     port,
                     last_heartbeat,
-                    partitions,
+                    masters,
+                    replicas,
                 } => {
                     if let Some(Node::Worker {
                         last_heartbeat: node_last_heartbeat,
-                        partitions: node_partitions,
+                        masters: master_partitions,
+                        replicas: replica_partitions,
                         ..
                     }) = state.nodes.get_mut(&id)
                     {
@@ -63,7 +65,8 @@ pub(super) fn handle_cluster_state(
                             *node_last_heartbeat = last_heartbeat;
                         }
 
-                        *node_partitions = partitions;
+                        *master_partitions = masters;
+                        *replica_partitions = replicas;
                     } else {
                         state.nodes.insert(
                             id,
@@ -71,7 +74,8 @@ pub(super) fn handle_cluster_state(
                                 host,
                                 port,
                                 last_heartbeat,
-                                partitions,
+                                masters,
+                                replicas,
                             },
                         );
                     }
@@ -114,13 +118,15 @@ pub(super) async fn handle_get_cluster_state(
                             host,
                             port,
                             last_heartbeat,
-                            partitions,
+                            masters,
+                            replicas,
                         } => ClusterNode::Worker {
                             id: id.clone(),
                             host: host.clone(),
                             port: *port,
                             last_heartbeat: *last_heartbeat,
-                            partitions: partitions.clone(),
+                            masters: masters.clone(),
+                            replicas: replicas.clone(),
                         },
                     })
                     .collect(),

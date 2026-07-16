@@ -62,13 +62,15 @@ fn create_new_workers_state(
                 host,
                 port,
                 last_heartbeat,
-                partitions,
+                masters,
+                replicas,
             } => Some(ClusterNode::Worker {
                 id: id.clone(),
                 host: host.clone(),
                 port: *port,
                 last_heartbeat: *last_heartbeat,
-                partitions: partitions.clone(),
+                masters: masters.clone(),
+                replicas: replicas.clone(),
             }),
         })
         .collect();
@@ -93,8 +95,10 @@ fn deduplicate_partitions(state: &mut State) {
         .values_mut()
         .filter(|node| node.is_worker())
         .for_each(|node| {
-            if let Node::Worker { partitions, .. } = node {
-                partitions.retain(|partition| seen.insert(*partition));
+            if let Node::Worker { masters, replicas, .. } = node {
+                masters.retain(|partition| seen.insert(*partition));
+                seen.clear();
+                replicas.retain(|partition| seen.insert(*partition));
                 seen.clear();
             }
         });
@@ -112,8 +116,12 @@ fn calculate_and_add_partitions(
             let index = calc_replica_index(vec.len(), master_partition_index, replica);
             let id = vec.get(index).unwrap();
             let node = state.nodes.get_mut(id).unwrap();
-            if let Node::Worker { partitions, .. } = node {
-                partitions.push(partition as u16);
+            if let Node::Worker { masters, replicas, .. } = node {
+                if replica == 0 {
+                    masters.push(partition as u16);
+                } else {
+                    replicas.push(partition as u16);
+                }
             }
         }
     }
