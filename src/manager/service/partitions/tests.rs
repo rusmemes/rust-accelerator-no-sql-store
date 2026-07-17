@@ -155,7 +155,7 @@ async fn tick_moves_previous_mapping_to_old_mapping_when_worker_layout_changes()
 }
 
 #[test]
-fn move_current_mapping_to_old_merges_existing_old_mapping_without_duplicates() {
+fn move_current_mapping_to_old_merges_existing_old_mapping_and_filters_stale_replicas() {
     let me = me("11111111-1111-1111-1111-111111111111");
     let current_master = node_id("22222222-2222-2222-2222-222222222222");
     let current_replica = node_id("33333333-3333-3333-3333-333333333333");
@@ -168,6 +168,14 @@ fn move_current_mapping_to_old_merges_existing_old_mapping_without_duplicates() 
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now_millis())),
             (current_master.clone(), worker_node("worker.local", 9100, 0)),
+            (
+                current_replica.clone(),
+                worker_node("replica.local", 9101, 0),
+            ),
+            (
+                old_replica.clone(),
+                worker_node("old-replica.local", 9102, 0),
+            ),
         ]),
         partitions: Partitions {
             mapping: HashMap::from([(
@@ -185,7 +193,12 @@ fn move_current_mapping_to_old_merges_existing_old_mapping_without_duplicates() 
         workers_with_calculated_partitions: Default::default(),
     };
 
-    move_current_mapping_to_old(&mut state);
+    let current_keys = vec![
+        current_master.clone(),
+        current_replica.clone(),
+        old_replica.clone(),
+    ];
+    move_current_mapping_to_old(&mut state, &current_keys);
 
     assert!(state.partitions.mapping.is_empty());
     assert_eq!(
@@ -193,13 +206,24 @@ fn move_current_mapping_to_old_merges_existing_old_mapping_without_duplicates() 
         Some(&replicas(vec![
             current_master,
             current_replica,
-            old_master,
             old_replica
         ]))
     );
-    assert_eq!(
-        state.partitions.old_replicas.get(&2),
-        Some(&replicas(vec![stale_worker]))
+    assert!(
+        !state
+            .partitions
+            .old_replicas
+            .get(&1)
+            .unwrap()
+            .contains(&old_master)
+    );
+    assert!(!state.partitions.old_replicas.contains_key(&2));
+    assert!(
+        !state
+            .partitions
+            .old_replicas
+            .values()
+            .any(|replicas| replicas.contains(&stale_worker))
     );
 }
 

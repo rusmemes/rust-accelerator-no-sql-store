@@ -33,7 +33,7 @@ pub(super) fn worker_partitions(
                 .map(|it| it.clone())
                 .collect::<Vec<_>>();
 
-            move_current_mapping_to_old(state);
+            move_current_mapping_to_old(state, &vec);
 
             if !vec.is_empty() {
                 calculate_new_mapping(state, PARTITIONS_AMOUNT, replication_factor, &vec);
@@ -85,7 +85,7 @@ fn create_new_workers_state(state: &mut State) -> ClusterState {
     }
 }
 
-fn move_current_mapping_to_old(state: &mut State) {
+fn move_current_mapping_to_old(state: &mut State, current_keys: &[NodeId]) {
     for (partition_id, partition) in state.partitions.mapping.drain() {
         if let Some(old_replicas) = state.partitions.old_replicas.get_mut(&partition_id) {
             old_replicas.extend(partition.replicas);
@@ -96,6 +96,11 @@ fn move_current_mapping_to_old(state: &mut State) {
             state.partitions.old_replicas.insert(partition_id, replicas);
         }
     }
+
+    state.partitions.old_replicas.retain(|_, old_replicas| {
+        old_replicas.retain(|node_id| current_keys.contains(node_id));
+        !old_replicas.is_empty()
+    });
 }
 
 fn calculate_new_mapping(
