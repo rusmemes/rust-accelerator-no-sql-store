@@ -6,23 +6,35 @@ use crate::manager::service::test_support::*;
 use crate::manager::service::State;
 use std::collections::{HashMap, HashSet};
 
-fn expected_master_for(partition: u16, workers: &[crate::common::NodeId]) -> crate::common::NodeId {
+fn expected_master_for(partition: u16, workers: &[NodeId]) -> NodeId {
     workers[partition as usize % workers.len()].clone()
 }
 
 fn expected_replicas_for(
     partition: u16,
     replication_factor: usize,
-    workers: &[crate::common::NodeId],
-) -> Vec<crate::common::NodeId> {
+    workers: &[NodeId],
+) -> Vec<NodeId> {
     let master_index = partition as usize % workers.len();
     (1..replication_factor)
         .map(|replica| workers[calc_replica_index(workers.len(), master_index, replica)].clone())
         .collect()
 }
 
-fn replicas(replicas: Vec<crate::common::NodeId>) -> HashSet<crate::common::NodeId> {
+fn replicas(replicas: Vec<NodeId>) -> HashSet<NodeId> {
     replicas.into_iter().collect()
+}
+
+fn assert_no_old_replicas_overlap_new_mapping(partitions: &Partitions) {
+    for (partition_id, old_replicas) in &partitions.old_replicas {
+        let new_mapping = partitions
+            .mapping
+            .get(partition_id)
+            .expect("old replica partition has new mapping");
+
+        assert!(!old_replicas.contains(&new_mapping.master));
+        assert!(old_replicas.is_disjoint(&new_mapping.replicas));
+    }
 }
 
 #[tokio::test]
@@ -134,24 +146,87 @@ async fn tick_moves_previous_mapping_to_old_mapping_when_worker_layout_changes()
                 || recipient_id == &worker_b
                 || recipient_id == &worker_c)
                 && state.partitions.mapping.len() == TEST_PARTITIONS_AMOUNT
-                && state.partitions.old_replicas.len() == TEST_PARTITIONS_AMOUNT
+                && !state.partitions.old_replicas.is_empty()
+                && state.partitions.old_replicas.len() < TEST_PARTITIONS_AMOUNT
     )));
 
     let state = service.state.as_ref().expect("state exists");
+    assert_no_old_replicas_overlap_new_mapping(&state.partitions);
     for partition in [0, 1, 2, 4095] {
         assert_eq!(
             state.partitions.mapping.get(&partition).unwrap().master,
             expected_master_for(partition, &new_workers)
         );
-        assert!(
-            state
-                .partitions
-                .old_replicas
-                .get(&partition)
-                .unwrap()
-                .contains(&expected_master_for(partition, &initial_workers))
-        );
     }
+    assert!(!state.partitions.old_replicas.contains_key(&0));
+    assert!(!state.partitions.old_replicas.contains_key(&1));
+    assert_eq!(
+        state.partitions.old_replicas.get(&2),
+        Some(&replicas(vec![worker_a.clone()]))
+    );
+    assert_eq!(
+        state.partitions.old_replicas.get(&4095),
+        Some(&replicas(vec![worker_b.clone()]))
+    );
+}
+
+#[test]
+fn deduplicate_partitions_removes_new_master_and_secondary_replicas_from_old_replicas() {
+    let old_only = node_id("11111111-1111-1111-1111-111111111111");
+    let new_master = node_id("22222222-2222-2222-2222-222222222222");
+    let new_replica = node_id("33333333-3333-3333-3333-333333333333");
+    let other_old = node_id("44444444-4444-4444-4444-444444444444");
+    let mut partitions = Partitions {
+        mapping: HashMap::from([(
+            1,
+            Partition {
+                master: new_master.clone(),
+                replicas: replicas(vec![new_replica.clone()]),
+            },
+        )]),
+        old_replicas: HashMap::from([
+            (
+                1,
+                replicas(vec![
+                    old_only.clone(),
+                    new_master.clone(),
+                    new_replica.clone(),
+                ]),
+            ),
+            (2, replicas(vec![other_old.clone()])),
+        ]),
+    };
+
+    deduplicate_partitions(&mut partitions);
+
+    assert_eq!(
+        partitions.old_replicas.get(&1),
+        Some(&replicas(vec![old_only]))
+    );
+    assert_eq!(
+        partitions.old_replicas.get(&2),
+        Some(&replicas(vec![other_old]))
+    );
+}
+
+#[test]
+fn deduplicate_partitions_removes_partition_when_all_old_replicas_are_new_replicas() {
+    let new_master = node_id("11111111-1111-1111-1111-111111111111");
+    let new_replica = node_id("22222222-2222-2222-2222-222222222222");
+    let mut partitions = Partitions {
+        mapping: HashMap::from([(
+            1,
+            Partition {
+                master: new_master.clone(),
+                replicas: replicas(vec![new_replica.clone()]),
+            },
+        )]),
+        old_replicas: HashMap::from([(1, replicas(vec![new_master, new_replica]))]),
+    };
+
+    deduplicate_partitions(&mut partitions);
+
+    assert!(!partitions.old_replicas.contains_key(&1));
 }
 
 #[test]
@@ -280,7 +355,7 @@ async fn tick_recomputes_while_old_mapping_is_present_and_merges_transition_mapp
     );
     assert_eq!(
         state.partitions.old_replicas.get(&1),
-        Some(&replicas(vec![worker_a, worker_b.clone()]))
+        Some(&replicas(vec![worker_a]))
     );
     assert!(state.workers_with_calculated_partitions.contains(&worker_c));
 }

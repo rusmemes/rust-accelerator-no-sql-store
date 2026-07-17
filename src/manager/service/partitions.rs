@@ -1,4 +1,4 @@
-use super::State;
+use super::{state, State};
 use crate::common::{Me, NodeId};
 use crate::manager::domain;
 use crate::manager::domain::{ClusterState, NodeProtocol, Partitions};
@@ -37,6 +37,7 @@ pub(super) fn worker_partitions(
 
             if !vec.is_empty() {
                 calculate_new_mapping(state, PARTITIONS_AMOUNT, replication_factor, &vec);
+                deduplicate_partitions(&mut state.partitions);
 
                 let workers_state = create_new_workers_state(state);
 
@@ -53,6 +54,17 @@ pub(super) fn worker_partitions(
             }
         }
     }
+}
+
+fn deduplicate_partitions(partitions: &mut state::Partitions) {
+    partitions.old_replicas.retain(|partition, old_replicas| {
+        if let Some(new_mapping) = partitions.mapping.get(partition) {
+            old_replicas.retain(|replica| {
+                replica != &new_mapping.master && !new_mapping.replicas.contains(replica)
+            });
+        }
+        !old_replicas.is_empty()
+    });
 }
 
 fn create_new_workers_state(state: &mut State) -> ClusterState {
