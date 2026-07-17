@@ -36,11 +36,11 @@ pub(super) async fn output(
                 port,
                 manager,
             } => {
-                let replication_factor = config
-                    .read()
-                    .await
+                let guard = config.read().await;
+                let replication_factor = guard
                     .replication_factor
                     .expect("Partitions and replication factor should be defined");
+                drop(guard);
                 if manager {
                     super::new_manager_connection(
                         &me,

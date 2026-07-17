@@ -80,8 +80,3 @@ pub struct ClusterState {
     pub items: Vec<ClusterNode>,
     pub partitions: Partitions,
 }
-
-#[derive(Debug, Clone)]
-pub struct Config {
-    pub replication_factor: usize,
-}

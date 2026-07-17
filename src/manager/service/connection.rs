@@ -5,7 +5,7 @@ use crate::manager::domain::{NodeProtocol, NodeType};
 pub(super) fn handle_node_disconnected(state: &mut State, id: NodeId, me: &Me) {
     if let Some(_) = state.nodes.remove(&id) {
         tracing::info!("Node disconnected: {:?}", id);
-        if Some(id) == state.elected_leader_id {
+        if Some(id) == state.elected_leader_id || state.nodes.len() == 1 {
             state.elected_leader_id = None;
         }
         tracing::info!("Me: {:?}", me);
