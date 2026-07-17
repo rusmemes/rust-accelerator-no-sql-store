@@ -17,9 +17,9 @@ pub(super) fn heartbeats(state: &mut State, output: &mut Vec<NodeProtocol>, me: 
             output.extend(
                 state
                     .nodes
-                    .iter()
-                    .filter(|(key, node)| **key != me.id && node.is_manager())
-                    .map(|(key, _)| NodeProtocol::Heartbeat {
+                    .keys()
+                    .filter(|key| **key != me.id)
+                    .map(|key| NodeProtocol::Heartbeat {
                         recipient_id: key.clone(),
                         heartbeat: Heartbeat {
                             id: me.id.clone(),
@@ -69,9 +69,9 @@ pub(super) fn handle_heartbeat(
                 output.extend(
                     state
                         .nodes
-                        .iter()
-                        .filter(|(key, node)| *key != &id && *key != &me.id && node.is_manager())
-                        .map(|(key, _)| NodeProtocol::Heartbeat {
+                        .keys()
+                        .filter(|key| *key != &id && *key != &me.id)
+                        .map(|key| NodeProtocol::Heartbeat {
                             recipient_id: key.clone(),
                             heartbeat: Heartbeat { id: id.clone(), ts },
                         }),
