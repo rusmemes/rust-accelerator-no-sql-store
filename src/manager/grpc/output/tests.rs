@@ -105,12 +105,9 @@ async fn output_routes_cluster_state_to_worker_session_includes_partitions() {
                     replicas: HashSet::from([manager_node_id.clone()]),
                 },
             )]),
-            old_mapping: HashMap::from([(
+            old_replicas: HashMap::from([(
                 6,
-                domain::Partition {
-                    master: manager_node_id.clone(),
-                    replicas: HashSet::from([worker_node_id.clone()]),
-                },
+                HashSet::from([manager_node_id.clone(), worker_node_id.clone()]),
             )]),
         },
     )
@@ -150,11 +147,14 @@ async fn output_routes_cluster_state_to_worker_session_includes_partitions() {
         mapping.replicas.iter().cloned().collect::<HashSet<_>>(),
         HashSet::from([manager_node_id.to_string()])
     );
-    let old_mapping = partitions.old_mapping.get(&6).expect("old mapping");
-    assert_eq!(old_mapping.master, manager_node_id.to_string());
+    let old_replicas = partitions.old_replicas.get(&6).expect("old replicas");
     assert_eq!(
-        old_mapping.replicas.iter().cloned().collect::<HashSet<_>>(),
-        HashSet::from([worker_node_id.to_string()])
+        old_replicas
+            .replicas
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>(),
+        HashSet::from([manager_node_id.to_string(), worker_node_id.to_string()])
     );
 
     let _ = me;

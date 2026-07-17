@@ -13,7 +13,7 @@ pub(super) struct Node {
 #[derive(Debug, Default)]
 pub(super) struct Partitions {
     pub mapping: HashMap<u16, Partition>,
-    pub old_mapping: HashMap<u16, Partition>,
+    pub old_replicas: HashMap<u16, HashSet<NodeId>>,
 }
 
 #[derive(Debug)]

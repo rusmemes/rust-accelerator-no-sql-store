@@ -64,7 +64,7 @@ pub struct ClusterNode {
 #[derive(Debug, Clone, Default)]
 pub struct Partitions {
     pub mapping: HashMap<u16, Partition>,
-    pub old_mapping: HashMap<u16, Partition>,
+    pub old_replicas: HashMap<u16, HashSet<NodeId>>,
 }
 
 #[derive(Debug, Clone)]
