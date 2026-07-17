@@ -222,11 +222,16 @@ async fn output_removes_closed_manager_session() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
     let (manager_tx, manager_rx) = manager_output_sender();
     drop(manager_rx);
-    let manager_sessions = manager_session(&manager_id, ManagerIOStream::Output(manager_tx));
+    let manager_sessions = manager_session(&manager_id, ManagerIOStream::Output(manager_tx.clone()));
+    // Heartbeat routing now checks worker sessions first. Keep this empty so we exercise
+    // the manager-session path and verify manager session cleanup on send failure.
+    let worker_sessions: Arc<RwLock<HashMap<NodeId, WorkerIOStream>>> =
+        Arc::new(RwLock::new(HashMap::new()));
 
     handle_output_heartbeat(
         &tx,
         &manager_sessions,
+        &worker_sessions,
         manager_id.clone(),
         me.id.clone(),
         123,

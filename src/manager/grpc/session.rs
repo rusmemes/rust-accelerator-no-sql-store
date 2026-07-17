@@ -4,7 +4,6 @@ use crate::manager::grpc::api::v1::{ManagerEvent, WorkerEvent};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::RwLock;
 use tonic::Status;
@@ -108,7 +107,7 @@ pub(super) async fn handle_common<Event, Error, Stream>(
     event_type: &'static str,
     event: impl FnOnce() -> Event,
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, Stream>>>,
+    sessions: &RwLock<HashMap<NodeId, Stream>>,
     id: NodeId,
 ) where
     Error: Debug,
