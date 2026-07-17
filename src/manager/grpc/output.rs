@@ -1,7 +1,7 @@
 use crate::common::{Me, NodeId};
 use crate::manager::domain::{self, ClusterNode, NodeProtocol};
 use crate::manager::grpc::api::v1::manager_event::Payload;
-use crate::manager::grpc::api::v1::worker_event;
+use crate::manager::grpc::api::v1::{worker_event, RemovePartitionFromReplica};
 use crate::manager::grpc::api::v1::{
     Heartbeat, Leader, ManagerEvent, VoteRequest, VoteResponse, WorkerEvent,
 };
@@ -24,6 +24,21 @@ pub(super) async fn output(
     while let Some(message) = rx.recv().await {
         tracing::debug!("output: {:?}", message);
         match message {
+            NodeProtocol::RemoveOldPartition {
+                id,
+                replica_id,
+                partition_id,
+            } => {
+                handle_output_remove_old_partition(
+                    &tx,
+                    &manager_sessions,
+                    &worker_sessions,
+                    id,
+                    replica_id,
+                    partition_id,
+                )
+                .await;
+            }
             NodeProtocol::Heartbeat {
                 recipient_id: id,
                 heartbeat: domain::Heartbeat { id: node_id, ts },
@@ -277,6 +292,48 @@ pub(super) async fn handle_output_heartbeat(
         id,
     )
     .await;
+}
+
+pub(super) async fn handle_output_remove_old_partition(
+    tx: &Sender<NodeProtocol>,
+    manager_sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
+    worker_sessions: &Arc<RwLock<HashMap<NodeId, WorkerIOStream>>>,
+    recipient_id: NodeId,
+    replica_id: NodeId,
+    partition_id: u16,
+) {
+    let remove_partition_from_replica = || RemovePartitionFromReplica {
+        partition_id: partition_id as u32,
+        replica_id: replica_id.to_string(),
+    };
+    let is_worker = worker_sessions.read().await.contains_key(&recipient_id);
+    if is_worker {
+        handle_common(
+            "RemoveOldPartition",
+            || WorkerEvent {
+                payload: Some(worker_event::Payload::RemovePartitionFromReplica(
+                    remove_partition_from_replica(),
+                )),
+            },
+            tx,
+            worker_sessions,
+            recipient_id,
+        )
+        .await;
+    } else {
+        handle_common(
+            "RemoveOldPartition",
+            || ManagerEvent {
+                payload: Some(Payload::RemovePartitionFromReplica(
+                    remove_partition_from_replica(),
+                )),
+            },
+            tx,
+            manager_sessions,
+            recipient_id,
+        )
+        .await;
+    }
 }
 
 #[cfg(test)]

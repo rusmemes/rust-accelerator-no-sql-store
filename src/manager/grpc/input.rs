@@ -1,7 +1,7 @@
 use crate::common::{Me, NodeId};
 use crate::manager::domain::{self, ClusterNode, NodeProtocol};
 use crate::manager::grpc::api::v1::manager_event::Payload;
-use crate::manager::grpc::api::v1::worker_event;
+use crate::manager::grpc::api::v1::{worker_event, RemovePartitionFromReplica};
 use crate::manager::grpc::api::v1::{
     Connect, Heartbeat, Leader, ManagerEvent, VoteRequest, VoteResponse, WorkerEvent,
 };
@@ -37,6 +37,22 @@ pub(super) async fn input_from_worker<S>(
         })) = input.next().await
         {
             match payload {
+                worker_event::Payload::RemovePartitionFromReplica(RemovePartitionFromReplica {
+                    replica_id,
+                    partition_id,
+                }) => {
+                    if let Err(e) = tx
+                        .send(NodeProtocol::RemoveOldPartition {
+                            id: id.clone(),
+                            replica_id: replica_id.into(),
+                            partition_id: partition_id as u16,
+                        })
+                        .await
+                    {
+                        tracing::error!("Error processing RemoveOldPartition signal: {}", e);
+                        break;
+                    }
+                }
                 worker_event::Payload::Heartbeat(Heartbeat { id: node_id, ts }) => {
                     if let Err(e) = tx
                         .send(NodeProtocol::Heartbeat {
@@ -110,6 +126,22 @@ pub(super) async fn input_from_manager(
         })) = input.message().await
         {
             match payload {
+                Payload::RemovePartitionFromReplica(RemovePartitionFromReplica {
+                    replica_id,
+                    partition_id,
+                }) => {
+                    if let Err(e) = tx
+                        .send(NodeProtocol::RemoveOldPartition {
+                            id: id.clone(),
+                            replica_id: replica_id.into(),
+                            partition_id: partition_id as u16,
+                        })
+                        .await
+                    {
+                        tracing::error!("Error processing RemoveOldPartition signal: {}", e);
+                        break;
+                    }
+                }
                 Payload::Heartbeat(Heartbeat { id: node_id, ts }) => {
                     if let Err(e) = tx
                         .send(NodeProtocol::Heartbeat {

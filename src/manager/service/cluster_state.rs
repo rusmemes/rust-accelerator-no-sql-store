@@ -1,5 +1,5 @@
 use super::{state, Node, State};
-use crate::common::NodeId;
+use crate::common::{Me, NodeId};
 use crate::manager::domain::{
     ClusterNode, ClusterState, NodeProtocol, NodeType, Partition, Partitions,
 };
@@ -150,6 +150,32 @@ fn state_partition_mapping_to_domain(
             )
         })
         .collect()
+}
+
+pub(super) fn handle_remove_old_partition(
+    output: &mut Vec<NodeProtocol>,
+    state: &mut State,
+    id: NodeId,
+    replica_id: NodeId,
+    partition_id: u16,
+    me: &Me,
+) {
+    if let Some(old_replicas) = state.partitions.old_replicas.get_mut(&partition_id) {
+        old_replicas.remove(&replica_id);
+    }
+    if state.elected_leader_id.as_ref() == Some(&me.id) {
+        for recipient_id in state
+            .nodes
+            .keys()
+            .filter(|key| *key != &replica_id && *key != &id && *key != &me.id)
+        {
+            output.push(NodeProtocol::RemoveOldPartition {
+                id: recipient_id.clone(),
+                replica_id: replica_id.clone(),
+                partition_id,
+            });
+        }
+    }
 }
 
 #[cfg(test)]
