@@ -309,7 +309,7 @@ pub(super) async fn handle_output_remove_old_partition(
     let is_worker = worker_sessions.read().await.contains_key(&recipient_id);
     if is_worker {
         handle_common(
-            "RemoveOldPartition",
+            "RemovePartitionFromReplica",
             || WorkerEvent {
                 payload: Some(worker_event::Payload::RemovePartitionFromReplica(
                     remove_partition_from_replica(),
@@ -322,7 +322,7 @@ pub(super) async fn handle_output_remove_old_partition(
         .await;
     } else {
         handle_common(
-            "RemoveOldPartition",
+            "RemovePartitionFromReplica",
             || ManagerEvent {
                 payload: Some(Payload::RemovePartitionFromReplica(
                     remove_partition_from_replica(),
