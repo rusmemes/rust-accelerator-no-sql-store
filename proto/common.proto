@@ -16,12 +16,16 @@ enum NodeType {
 
 message Partitions {
   map<uint32, Partition> mapping = 1;
-  map<uint32, Partition> old_mapping = 2;
+  map<uint32, OldReplicas> old_replicas = 2;
 }
 
 message Partition {
   string master = 1;
   repeated string replicas = 2;
+}
+
+message OldReplicas {
+  repeated string replicas = 1;
 }
 
 message Node {

@@ -80,32 +80,20 @@ fn create_new_workers_state(state: &mut State) -> ClusterState {
                     )
                 })
                 .collect(),
-            old_mapping: state
-                .partitions
-                .old_mapping
-                .iter()
-                .map(|(id, partition)| {
-                    (
-                        *id,
-                        domain::Partition {
-                            master: partition.master.clone(),
-                            replicas: partition.replicas.clone(),
-                        },
-                    )
-                })
-                .collect(),
+            old_replicas: state.partitions.old_replicas.clone(),
         },
     }
 }
 
 fn move_current_mapping_to_old(state: &mut State) {
     for (partition_id, partition) in state.partitions.mapping.drain() {
-        if let Some(old_partition) = state.partitions.old_mapping.get_mut(&partition_id) {
-            old_partition.replicas.extend(partition.replicas);
-            old_partition.replicas.insert(old_partition.master.clone());
-            old_partition.master = partition.master;
+        if let Some(old_replicas) = state.partitions.old_replicas.get_mut(&partition_id) {
+            old_replicas.extend(partition.replicas);
+            old_replicas.insert(partition.master.clone());
         } else {
-            state.partitions.old_mapping.insert(partition_id, partition);
+            let mut replicas = partition.replicas;
+            replicas.insert(partition.master);
+            state.partitions.old_replicas.insert(partition_id, replicas);
         }
     }
 }

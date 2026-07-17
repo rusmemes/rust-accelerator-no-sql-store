@@ -58,12 +58,12 @@ async fn tick_recomputes_cluster_partition_mapping_and_broadcasts_cluster_state(
             if (recipient_id == &worker_a || recipient_id == &worker_b)
                 && state.items.is_empty()
                 && state.partitions.mapping.len() == TEST_PARTITIONS_AMOUNT
-                && state.partitions.old_mapping.is_empty()
+                && state.partitions.old_replicas.is_empty()
     )));
 
     let state = service.state.as_ref().expect("state exists");
     assert_eq!(state.partitions.mapping.len(), TEST_PARTITIONS_AMOUNT);
-    assert!(state.partitions.old_mapping.is_empty());
+    assert!(state.partitions.old_replicas.is_empty());
 
     for partition in [0, 1, 2, 4095] {
         let actual = state.partitions.mapping.get(&partition).unwrap();
@@ -107,7 +107,7 @@ async fn tick_moves_previous_mapping_to_old_mapping_when_worker_layout_changes()
     {
         let state = service.state.as_ref().expect("state exists");
         assert_eq!(state.partitions.mapping.len(), TEST_PARTITIONS_AMOUNT);
-        assert!(state.partitions.old_mapping.is_empty());
+        assert!(state.partitions.old_replicas.is_empty());
         for partition in [0, 1, 4095] {
             assert_eq!(
                 state.partitions.mapping.get(&partition).unwrap().master,
@@ -134,7 +134,7 @@ async fn tick_moves_previous_mapping_to_old_mapping_when_worker_layout_changes()
                 || recipient_id == &worker_b
                 || recipient_id == &worker_c)
                 && state.partitions.mapping.len() == TEST_PARTITIONS_AMOUNT
-                && state.partitions.old_mapping.len() == TEST_PARTITIONS_AMOUNT
+                && state.partitions.old_replicas.len() == TEST_PARTITIONS_AMOUNT
     )));
 
     let state = service.state.as_ref().expect("state exists");
@@ -143,9 +143,13 @@ async fn tick_moves_previous_mapping_to_old_mapping_when_worker_layout_changes()
             state.partitions.mapping.get(&partition).unwrap().master,
             expected_master_for(partition, &new_workers)
         );
-        assert_eq!(
-            state.partitions.old_mapping.get(&partition).unwrap().master,
-            expected_master_for(partition, &initial_workers)
+        assert!(
+            state
+                .partitions
+                .old_replicas
+                .get(&partition)
+                .unwrap()
+                .contains(&expected_master_for(partition, &initial_workers))
         );
     }
 }
@@ -173,21 +177,9 @@ fn move_current_mapping_to_old_merges_existing_old_mapping_without_duplicates() 
                     replicas: replicas(vec![current_replica.clone(), old_replica.clone()]),
                 },
             )]),
-            old_mapping: HashMap::from([
-                (
-                    1,
-                    Partition {
-                        master: old_master.clone(),
-                        replicas: replicas(vec![old_replica.clone()]),
-                    },
-                ),
-                (
-                    2,
-                    Partition {
-                        master: stale_worker.clone(),
-                        replicas: HashSet::new(),
-                    },
-                ),
+            old_replicas: HashMap::from([
+                (1, replicas(vec![old_master.clone(), old_replica.clone()])),
+                (2, replicas(vec![stale_worker.clone()])),
             ]),
         },
         workers_with_calculated_partitions: Default::default(),
@@ -197,28 +189,17 @@ fn move_current_mapping_to_old_merges_existing_old_mapping_without_duplicates() 
 
     assert!(state.partitions.mapping.is_empty());
     assert_eq!(
-        state
-            .partitions
-            .old_mapping
-            .get(&1)
-            .map(|partition| &partition.master),
-        Some(&current_master)
+        state.partitions.old_replicas.get(&1),
+        Some(&replicas(vec![
+            current_master,
+            current_replica,
+            old_master,
+            old_replica
+        ]))
     );
     assert_eq!(
-        state
-            .partitions
-            .old_mapping
-            .get(&1)
-            .map(|partition| &partition.replicas),
-        Some(&replicas(vec![current_replica, old_master, old_replica]))
-    );
-    assert_eq!(
-        state
-            .partitions
-            .old_mapping
-            .get(&2)
-            .map(|partition| &partition.master),
-        Some(&stale_worker)
+        state.partitions.old_replicas.get(&2),
+        Some(&replicas(vec![stale_worker]))
     );
 }
 
@@ -251,13 +232,7 @@ async fn tick_recomputes_while_old_mapping_is_present_and_merges_transition_mapp
                     replicas: HashSet::new(),
                 },
             )]),
-            old_mapping: HashMap::from([(
-                1,
-                Partition {
-                    master: worker_b.clone(),
-                    replicas: HashSet::new(),
-                },
-            )]),
+            old_replicas: HashMap::from([(1, replicas(vec![worker_b.clone()]))]),
         },
         workers_with_calculated_partitions: [worker_a.clone(), worker_b.clone()]
             .into_iter()
@@ -270,7 +245,7 @@ async fn tick_recomputes_while_old_mapping_is_present_and_merges_transition_mapp
     assert_eq!(output.len(), 3);
     let state = service.state.as_ref().expect("state exists");
     assert_eq!(state.partitions.mapping.len(), TEST_PARTITIONS_AMOUNT);
-    assert_eq!(state.partitions.old_mapping.len(), 1);
+    assert_eq!(state.partitions.old_replicas.len(), 1);
     assert_eq!(
         state
             .partitions
@@ -280,12 +255,8 @@ async fn tick_recomputes_while_old_mapping_is_present_and_merges_transition_mapp
         Some(&worker_b)
     );
     assert_eq!(
-        state
-            .partitions
-            .old_mapping
-            .get(&1)
-            .map(|partition| (&partition.master, &partition.replicas)),
-        Some((&worker_a, &replicas(vec![worker_b.clone()])))
+        state.partitions.old_replicas.get(&1),
+        Some(&replicas(vec![worker_a, worker_b.clone()]))
     );
     assert!(state.workers_with_calculated_partitions.contains(&worker_c));
 }

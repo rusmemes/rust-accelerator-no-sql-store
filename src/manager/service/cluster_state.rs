@@ -104,7 +104,7 @@ pub(super) fn handle_get_cluster_state(
                     .collect(),
                 partitions: Partitions {
                     mapping: state_partition_mapping_to_domain(&state.partitions.mapping),
-                    old_mapping: state_partition_mapping_to_domain(&state.partitions.old_mapping),
+                    old_replicas: state.partitions.old_replicas.clone(),
                 },
             },
         });
@@ -114,7 +114,7 @@ pub(super) fn handle_get_cluster_state(
 fn domain_partitions_to_state(partitions: Partitions) -> state::Partitions {
     state::Partitions {
         mapping: domain_partition_mapping_to_state(partitions.mapping),
-        old_mapping: domain_partition_mapping_to_state(partitions.old_mapping),
+        old_replicas: partitions.old_replicas,
     }
 }
 

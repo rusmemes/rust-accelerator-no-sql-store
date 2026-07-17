@@ -69,7 +69,7 @@ async fn get_cluster_state_returns_current_cluster_snapshot() {
     assert_eq!(cluster_state.leader_id, me.id);
     assert_eq!(cluster_state.items.len(), 2);
     assert!(cluster_state.partitions.mapping.is_empty());
-    assert!(cluster_state.partitions.old_mapping.is_empty());
+    assert!(cluster_state.partitions.old_replicas.is_empty());
 }
 
 #[tokio::test]
@@ -96,7 +96,7 @@ async fn get_cluster_state_returns_worker_items_and_partition_mapping() {
                     replicas: replicas(vec![me.id.clone()]),
                 },
             )]),
-            old_mapping: Default::default(),
+            old_replicas: Default::default(),
         },
         workers_with_calculated_partitions: Default::default(),
     });
@@ -327,12 +327,9 @@ async fn cluster_state_applies_partition_mapping_and_adds_unknown_workers() {
                     replicas: replicas(vec![other_worker.clone()]),
                 },
             )]),
-            old_mapping: HashMap::from([(
+            old_replicas: HashMap::from([(
                 8,
-                Partition {
-                    master: other_worker.clone(),
-                    replicas: replicas(vec![worker.clone()]),
-                },
+                replicas(vec![worker.clone(), other_worker.clone()]),
             )]),
         },
     );
@@ -356,12 +353,8 @@ async fn cluster_state_applies_partition_mapping_and_adds_unknown_workers() {
         Some((&worker, &replicas(vec![other_worker.clone()])))
     );
     assert_eq!(
-        state
-            .partitions
-            .old_mapping
-            .get(&8)
-            .map(|partition| (&partition.master, &partition.replicas)),
-        Some((&other_worker, &replicas(vec![worker])))
+        state.partitions.old_replicas.get(&8),
+        Some(&replicas(vec![worker, other_worker]))
     );
 }
 
