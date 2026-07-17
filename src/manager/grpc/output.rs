@@ -43,7 +43,8 @@ pub(super) async fn output(
                 recipient_id: id,
                 heartbeat: domain::Heartbeat { id: node_id, ts },
             } => {
-                handle_output_heartbeat(&tx, &manager_sessions, id, node_id, ts).await;
+                handle_output_heartbeat(&tx, &manager_sessions, &worker_sessions, id, node_id, ts)
+                    .await;
             }
             NodeProtocol::NewConnection {
                 id: _,
@@ -115,10 +116,10 @@ pub(super) async fn output(
 }
 
 pub(super) async fn handle_output_leader(
-    me: &Arc<Me>,
+    me: &Me,
     tx: &Sender<NodeProtocol>,
-    manager_sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
-    worker_sessions: &Arc<RwLock<HashMap<NodeId, WorkerIOStream>>>,
+    manager_sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
+    worker_sessions: &RwLock<HashMap<NodeId, WorkerIOStream>>,
     id: NodeId,
     epoch: u64,
     ts: u64,
@@ -157,7 +158,7 @@ pub(super) async fn handle_output_leader(
 
 pub(super) async fn handle_output_vote_response(
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
+    sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
     id: NodeId,
     leader_id: NodeId,
     ts: u64,
@@ -179,7 +180,7 @@ pub(super) async fn handle_output_vote_response(
 
 pub(super) async fn handle_output_vote_request(
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
+    sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
     id: NodeId,
     epoch: u64,
     ts: u64,
@@ -198,8 +199,8 @@ pub(super) async fn handle_output_vote_request(
 
 pub(super) async fn handle_output_cluster_state(
     tx: &Sender<NodeProtocol>,
-    manager_sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
-    worker_sessions: &Arc<RwLock<HashMap<NodeId, WorkerIOStream>>>,
+    manager_sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
+    worker_sessions: &RwLock<HashMap<NodeId, WorkerIOStream>>,
     id: NodeId,
     epoch: u64,
     leader_id: NodeId,
@@ -257,7 +258,7 @@ pub(super) async fn handle_output_cluster_state(
 
 pub(super) async fn handle_output_get_cluster_state(
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
+    sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
     id: NodeId,
 ) {
     handle_common(
@@ -274,30 +275,47 @@ pub(super) async fn handle_output_get_cluster_state(
 
 pub(super) async fn handle_output_heartbeat(
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
+    manager_sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
+    worker_sessions: &RwLock<HashMap<NodeId, WorkerIOStream>>,
     id: NodeId,
     node_id: NodeId,
     ts: u64,
 ) {
-    handle_common(
-        "Heartbeat",
-        || ManagerEvent {
-            payload: Some(Payload::Heartbeat(Heartbeat {
-                id: node_id.to_string(),
-                ts,
-            })),
-        },
-        tx,
-        sessions,
-        id,
-    )
-    .await;
+    let heartbeat = || Heartbeat {
+        id: node_id.to_string(),
+        ts,
+    };
+
+    let is_worker = worker_sessions.read().await.contains_key(&id);
+    if is_worker {
+        handle_common(
+            "Heartbeat",
+            || WorkerEvent {
+                payload: Some(worker_event::Payload::Heartbeat(heartbeat())),
+            },
+            tx,
+            worker_sessions,
+            id,
+        )
+        .await;
+    } else {
+        handle_common(
+            "Heartbeat",
+            || ManagerEvent {
+                payload: Some(Payload::Heartbeat(heartbeat())),
+            },
+            tx,
+            manager_sessions,
+            id,
+        )
+        .await;
+    }
 }
 
 pub(super) async fn handle_output_remove_old_partition(
     tx: &Sender<NodeProtocol>,
-    manager_sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
-    worker_sessions: &Arc<RwLock<HashMap<NodeId, WorkerIOStream>>>,
+    manager_sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
+    worker_sessions: &RwLock<HashMap<NodeId, WorkerIOStream>>,
     recipient_id: NodeId,
     replica_id: NodeId,
     partition_id: u16,
