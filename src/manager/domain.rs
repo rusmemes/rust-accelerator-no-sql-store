@@ -44,6 +44,11 @@ pub enum NodeProtocol {
     NodeDisconnected {
         id: NodeId,
     },
+    RemoveOldPartition {
+        id: NodeId,
+        replica_id: NodeId,
+        partition_id: u16,
+    },
 }
 
 #[derive(Debug)]

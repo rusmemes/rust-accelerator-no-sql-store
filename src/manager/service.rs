@@ -28,6 +28,7 @@ mod heartbeat;
 mod partitions;
 mod state;
 
+use crate::manager::service::cluster_state::handle_remove_old_partition;
 use crate::manager::service::state::Partitions;
 use state::{Node, State};
 
@@ -77,6 +78,18 @@ impl ManagerService {
     async fn process(&mut self, msg: NodeProtocol, output: &mut Vec<NodeProtocol>) {
         if let Some(state) = self.state.as_mut() {
             match msg {
+                NodeProtocol::RemoveOldPartition {
+                    id,
+                    replica_id,
+                    partition_id,
+                } => handle_remove_old_partition(
+                    output,
+                    state,
+                    id,
+                    replica_id,
+                    partition_id,
+                    &self.me,
+                ),
                 NodeProtocol::NewConnection {
                     id,
                     host,
