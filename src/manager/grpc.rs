@@ -1,5 +1,4 @@
-use crate::manager::grpc::api::v1::worker_event;
-use crate::manager::grpc::common::v1::Config;
+use crate::manager::grpc::api::v1::{worker_event, Config};
 use crate::{
     common::{Me, NodeId},
     manager::{
@@ -17,8 +16,6 @@ use crate::{
 use input::{input_from_manager, input_from_worker};
 use manager_connection::new_manager_connection;
 use output::output;
-#[cfg(test)]
-use output::{handle_output_cluster_state, handle_output_heartbeat, handle_output_leader};
 use session::{ManagerIOStream, WorkerIOStream};
 use std::{collections::HashMap, net::AddrParseError, sync::Arc};
 use thiserror::Error;
@@ -42,6 +39,7 @@ mod common {
     }
 }
 
+mod conversions;
 mod input;
 mod manager_connection;
 mod output;
@@ -114,13 +112,14 @@ impl ManagerApi for ManagerApiService {
                     Some(Payload::Connect(Connect {
                         id,
                         addr: Some(Addr { host, port }),
-                        config: Some(Config { replication_factor}),
+                        config: Some(Config { replication_factor }),
                     })),
             })) = input_stream.message().await
             {
-                let mut guard = config.write().await;
-                guard.replication_factor = Some(replication_factor as usize);
-                drop(guard);
+                {
+                    let mut guard = config.write().await;
+                    guard.replication_factor = Some(replication_factor as usize);
+                }
 
                 let id: NodeId = id.into();
                 manager_sessions
@@ -228,9 +227,8 @@ pub async fn start_server(
     channel: (Sender<NodeProtocol>, Receiver<NodeProtocol>),
     cancellation_token: CancellationToken,
 ) -> Result<(), GrpcServerError> {
-    let guard = config.read().await;
-    let grpc_address = format!("127.0.0.1:{}", guard.grpc_port).as_str().parse()?;
-    drop(guard);
+    let grpc_port = { config.read().await.grpc_port };
+    let grpc_address = format!("127.0.0.1:{grpc_port}").as_str().parse()?;
 
     tracing::info!("GRPC Server is starting at {}", grpc_address);
 
@@ -248,4 +246,4 @@ pub async fn start_server(
 }
 
 #[cfg(test)]
-mod tests;
+mod test_support;

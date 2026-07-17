@@ -13,7 +13,8 @@ use tonic::Status;
 EitherStream is a stream that can send messages to either a Sender<Result<Message, Status>> or a Sender<Message>.
 It is used to send messages to either the gRPC output stream or the gRPC input stream.
 */
-pub(super) enum CommunicationStreamEither<A, B> {
+#[derive(Clone)]
+pub(super) enum CommunicationStreamEither<A: Clone, B: Clone> {
     Input(A),
     Output(B),
 }
@@ -25,7 +26,7 @@ type ManagerIOStreamError = CommunicationStreamEither<Status, ManagerEvent>;
 
 impl<E> Debug for CommunicationStreamEither<Status, E>
 where
-    E: Debug,
+    E: Debug + Clone,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -103,14 +104,15 @@ impl IOStreamExt<WorkerEvent, WorkerIOStreamError> for WorkerIOStream {
     }
 }
 
-pub(super) async fn handle_common<Event, Error>(
+pub(super) async fn handle_common<Event, Error, Stream>(
     event_type: &'static str,
     event: impl FnOnce() -> Event,
     tx: &Sender<NodeProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, impl IOStreamExt<Event, Error>>>>,
+    sessions: &Arc<RwLock<HashMap<NodeId, Stream>>>,
     id: NodeId,
 ) where
     Error: Debug,
+    Stream: IOStreamExt<Event, Error> + Clone,
 {
     let is_closed = {
         sessions
@@ -124,7 +126,7 @@ pub(super) async fn handle_common<Event, Error>(
         tracing::debug!("Node {} is disconnected", id);
         sessions.write().await.remove(&id);
         let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
-    } else if let Some(sender) = sessions.read().await.get(&id) {
+    } else if let Some(sender) = { sessions.read().await.get(&id).cloned() } {
         if let Err(e) = sender.send(event()).await {
             tracing::error!("Error sending {event_type} to {}: {:?}", id, e);
         }

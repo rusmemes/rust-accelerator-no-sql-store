@@ -8,10 +8,14 @@ service ManagerApi {
   rpc OpenWorkerConnection(stream WorkerEvent) returns (stream WorkerEvent);
 }
 
+message Config {
+  uint32 replication_factor = 1;
+}
+
 message Connect {
   string id = 1;
   common.v1.Addr addr = 2;
-  optional common.v1.Config config = 3;
+  optional Config config = 3;
 }
 
 message ConnectResponse {

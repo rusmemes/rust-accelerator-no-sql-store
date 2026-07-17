@@ -1,5 +1,5 @@
 use crate::common::{now_millis, Config, Me};
-use crate::manager::domain::{ClusterState, Heartbeat, NodeProtocol};
+use crate::manager::domain::{ClusterState, Heartbeat, NodeProtocol, NodeType};
 use cluster_state::{handle_cluster_state, handle_get_cluster_state};
 use connection::{handle_new_connection, handle_node_disconnected};
 use election::{
@@ -28,6 +28,7 @@ mod heartbeat;
 mod partitions;
 mod state;
 
+use crate::manager::service::state::Partitions;
 use state::{Node, State};
 
 // to make nodes trying to start elections at different times, we randomize the election timeout interval
@@ -60,15 +61,14 @@ impl ManagerService {
         if let Some(state) = self.state.as_mut() {
             heartbeats(state, output, &self.me);
             start_election_if_needed(state, &mut self.elections, &self.me, output);
-            let config = self.config.read().await;
-            let replication_factor = config.replication_factor.expect("required and has default");
-            drop(config);
-            worker_partitions(
-                state,
-                output,
-                &self.me,
-                replication_factor,
-            );
+            let replication_factor = {
+                self.config
+                    .read()
+                    .await
+                    .replication_factor
+                    .expect("required and has default")
+            };
+            worker_partitions(state, output, &self.me, replication_factor);
         }
         tracing::debug!("state: {:?}", self.state);
         tracing::debug!("elections: {:?}", self.elections);
@@ -87,19 +87,17 @@ impl ManagerService {
                     heartbeat: Heartbeat { id, ts },
                     ..
                 } => handle_heartbeat(output, state, id, ts, &self.me),
-                NodeProtocol::GetClusterState { id } => {
-                    handle_get_cluster_state(output, state, id, &self.config).await
-                }
+                NodeProtocol::GetClusterState { id } => handle_get_cluster_state(output, state, id),
                 NodeProtocol::ClusterState {
                     state:
                         ClusterState {
                             epoch,
                             leader_id,
                             items,
-                            config: _,
+                            partitions,
                         },
                     ..
-                } => handle_cluster_state(output, state, epoch, leader_id, items),
+                } => handle_cluster_state(output, state, epoch, leader_id, items, partitions),
                 NodeProtocol::VoteRequest { id, epoch, ts } => {
                     tracing::info!("VoteRequest: {:?} {:?}", id, epoch);
                     handle_vote_request(output, state, id, epoch, ts, &mut self.elections);
@@ -129,46 +127,50 @@ impl ManagerService {
     }
 
     async fn get_init_messages(&mut self) -> Vec<NodeProtocol> {
+        let manager_host_port = { self.config.read().await.manager_host_port.clone() };
+
         if self.state.is_some() {
             vec![]
-        } else if let Some((manager_host, manager_port)) =
-            &self.config.read().await.manager_host_port
-        {
+        } else if let Some((manager_host, manager_port)) = manager_host_port {
             let mut nodes = HashMap::new();
             nodes.insert(
                 self.me.id.clone(),
-                Node::Manager {
+                Node {
                     host: self.me.host.clone(),
                     port: self.me.port,
                     last_heartbeat: now_millis(),
+                    node_type: NodeType::Manager,
                 },
             );
             self.state = Some(State {
                 epoch: None,
                 elected_leader_id: None,
                 nodes,
+                partitions: Partitions::default(),
                 workers_with_calculated_partitions: Default::default(),
             });
             vec![NodeProtocol::NewConnection {
                 id: None,
-                host: manager_host.clone(),
-                port: *manager_port as u32,
+                host: manager_host,
+                port: manager_port as u32,
                 manager: true,
             }]
         } else {
             let mut nodes = HashMap::new();
             nodes.insert(
                 self.me.id.clone(),
-                Node::Manager {
+                Node {
                     host: self.me.host.clone(),
                     port: self.me.port,
                     last_heartbeat: now_millis(),
+                    node_type: NodeType::Manager,
                 },
             );
             self.state = Some(State {
                 epoch: Some(0),
                 elected_leader_id: None,
                 nodes,
+                partitions: Partitions::default(),
                 workers_with_calculated_partitions: Default::default(),
             });
             vec![]
@@ -228,5 +230,7 @@ pub async fn start_service(
     }
 }
 
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 mod tests;

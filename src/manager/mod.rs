@@ -36,7 +36,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let me = Arc::new(Me::new(host.clone(), *port as u32));
 
     tracing::info!("Starting manager {:?}", me);
-    
+
     let config = Arc::new(RwLock::new(config));
 
     let cancellation_token = CancellationToken::new();

@@ -1,6 +1,6 @@
 use super::{get_random_number, Node, State};
 use crate::common::{Me, NodeId};
-use crate::manager::domain::NodeProtocol;
+use crate::manager::domain::{NodeProtocol, NodeType};
 use std::cmp::max;
 use std::collections::{BTreeMap, HashSet};
 
@@ -80,7 +80,12 @@ pub(super) fn handle_leader(
 ) {
     if state.epoch < Some(epoch) {
         elections.clear();
-        if let Some(Node::Manager { last_heartbeat, .. }) = state.nodes.get_mut(&id) {
+        if let Some(Node {
+            last_heartbeat,
+            node_type: NodeType::Manager,
+            ..
+        }) = state.nodes.get_mut(&id)
+        {
             *last_heartbeat = ts;
             state.elected_leader_id = Some(id);
             state.epoch = Some(epoch);
@@ -210,3 +215,6 @@ pub(super) fn handle_vote_request(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
