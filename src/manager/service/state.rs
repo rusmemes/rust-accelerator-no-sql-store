@@ -1,6 +1,6 @@
 use crate::common::NodeId;
 use crate::manager::domain::NodeType;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 #[derive(Debug)]
 pub(super) struct Node {
@@ -19,7 +19,7 @@ pub(super) struct Partitions {
 #[derive(Debug)]
 pub(super) struct Partition {
     pub master: NodeId,
-    pub replicas: Vec<NodeId>,
+    pub replicas: HashSet<NodeId>,
 }
 
 impl Node {

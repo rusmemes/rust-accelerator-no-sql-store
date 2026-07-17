@@ -3,7 +3,7 @@ use crate::common::{Me, NodeId};
 use crate::manager::domain;
 use crate::manager::domain::{ClusterState, NodeProtocol, Partitions};
 use crate::manager::service::state::Partition;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 const PARTITIONS_AMOUNT: usize = 4096;
 
@@ -13,7 +13,7 @@ pub(super) fn worker_partitions(
     me: &Me,
     replication_factor: usize,
 ) {
-    if state.elected_leader_id.as_ref() == Some(&me.id) && state.partitions.old_mapping.is_empty() {
+    if state.elected_leader_id.as_ref() == Some(&me.id) {
         let current_keys = state
             .nodes
             .iter()
@@ -99,7 +99,15 @@ fn create_new_workers_state(state: &mut State) -> ClusterState {
 }
 
 fn move_current_mapping_to_old(state: &mut State) {
-    state.partitions.old_mapping = std::mem::take(&mut state.partitions.mapping);
+    for (partition_id, partition) in state.partitions.mapping.drain() {
+        if let Some(old_partition) = state.partitions.old_mapping.get_mut(&partition_id) {
+            old_partition.replicas.extend(partition.replicas);
+            old_partition.replicas.insert(old_partition.master.clone());
+            old_partition.master = partition.master;
+        } else {
+            state.partitions.old_mapping.insert(partition_id, partition);
+        }
+    }
 }
 
 fn calculate_new_mapping(
@@ -119,7 +127,7 @@ fn calculate_new_mapping(
                     partition as u16,
                     Partition {
                         master: id.clone(),
-                        replicas: vec![],
+                        replicas: HashSet::new(),
                     },
                 );
             } else {
@@ -127,7 +135,7 @@ fn calculate_new_mapping(
                     .get_mut(&(partition as u16))
                     .expect("entry is added on replica == 0")
                     .replicas
-                    .push(id.clone());
+                    .insert(id.clone());
             }
         }
     }

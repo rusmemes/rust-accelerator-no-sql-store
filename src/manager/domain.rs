@@ -1,5 +1,5 @@
 use crate::common::NodeId;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeType {
@@ -70,7 +70,7 @@ pub struct Partitions {
 #[derive(Debug, Clone)]
 pub struct Partition {
     pub master: NodeId,
-    pub replicas: Vec<NodeId>,
+    pub replicas: HashSet<NodeId>,
 }
 
 #[derive(Debug, Clone)]

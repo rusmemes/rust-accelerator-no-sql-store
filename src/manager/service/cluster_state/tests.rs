@@ -3,7 +3,7 @@ use crate::common::now_millis;
 use crate::manager::domain::{ClusterNode, NodeProtocol, NodeType, Partition, Partitions};
 use crate::manager::service::test_support::*;
 use crate::manager::service::State;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 fn cluster_node(
     id: crate::common::NodeId,
@@ -19,6 +19,10 @@ fn cluster_node(
         last_heartbeat,
         node_type,
     }
+}
+
+fn replicas(replicas: Vec<crate::common::NodeId>) -> HashSet<crate::common::NodeId> {
+    replicas.into_iter().collect()
 }
 
 #[tokio::test]
@@ -89,7 +93,7 @@ async fn get_cluster_state_returns_worker_items_and_partition_mapping() {
                 7,
                 crate::manager::service::state::Partition {
                     master: worker_id.clone(),
-                    replicas: vec![me.id.clone()],
+                    replicas: replicas(vec![me.id.clone()]),
                 },
             )]),
             old_mapping: Default::default(),
@@ -130,7 +134,7 @@ async fn get_cluster_state_returns_worker_items_and_partition_mapping() {
             .mapping
             .get(&7)
             .map(|partition| (&partition.master, &partition.replicas)),
-        Some((&worker_id, &vec![me.id.clone()]))
+        Some((&worker_id, &replicas(vec![me.id.clone()])))
     );
 }
 
@@ -320,14 +324,14 @@ async fn cluster_state_applies_partition_mapping_and_adds_unknown_workers() {
                 9,
                 Partition {
                     master: worker.clone(),
-                    replicas: vec![other_worker.clone()],
+                    replicas: replicas(vec![other_worker.clone()]),
                 },
             )]),
             old_mapping: HashMap::from([(
                 8,
                 Partition {
                     master: other_worker.clone(),
-                    replicas: vec![worker.clone()],
+                    replicas: replicas(vec![worker.clone()]),
                 },
             )]),
         },
@@ -349,7 +353,7 @@ async fn cluster_state_applies_partition_mapping_and_adds_unknown_workers() {
             .mapping
             .get(&9)
             .map(|partition| (&partition.master, &partition.replicas)),
-        Some((&worker, &vec![other_worker.clone()]))
+        Some((&worker, &replicas(vec![other_worker.clone()])))
     );
     assert_eq!(
         state
@@ -357,7 +361,7 @@ async fn cluster_state_applies_partition_mapping_and_adds_unknown_workers() {
             .old_mapping
             .get(&8)
             .map(|partition| (&partition.master, &partition.replicas)),
-        Some((&other_worker, &vec![worker]))
+        Some((&other_worker, &replicas(vec![worker])))
     );
 }
 

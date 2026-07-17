@@ -4,7 +4,7 @@ use crate::manager::domain::NodeProtocol;
 use crate::manager::service::state::{Partition, Partitions};
 use crate::manager::service::test_support::*;
 use crate::manager::service::State;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 fn expected_master_for(partition: u16, workers: &[crate::common::NodeId]) -> crate::common::NodeId {
     workers[partition as usize % workers.len()].clone()
@@ -19,6 +19,10 @@ fn expected_replicas_for(
     (1..replication_factor)
         .map(|replica| workers[calc_replica_index(workers.len(), master_index, replica)].clone())
         .collect()
+}
+
+fn replicas(replicas: Vec<crate::common::NodeId>) -> HashSet<crate::common::NodeId> {
+    replicas.into_iter().collect()
 }
 
 #[tokio::test]
@@ -66,7 +70,7 @@ async fn tick_recomputes_cluster_partition_mapping_and_broadcasts_cluster_state(
         assert_eq!(actual.master, expected_master_for(partition, &workers));
         assert_eq!(
             actual.replicas,
-            expected_replicas_for(partition, 3, &workers)
+            replicas(expected_replicas_for(partition, 3, &workers))
         );
     }
 }
@@ -147,32 +151,44 @@ async fn tick_moves_previous_mapping_to_old_mapping_when_worker_layout_changes()
 }
 
 #[test]
-fn move_current_mapping_to_old_replaces_stale_old_mapping_and_clears_current_mapping() {
+fn move_current_mapping_to_old_merges_existing_old_mapping_without_duplicates() {
     let me = me("11111111-1111-1111-1111-111111111111");
-    let worker = node_id("22222222-2222-2222-2222-222222222222");
-    let stale_worker = node_id("33333333-3333-3333-3333-333333333333");
+    let current_master = node_id("22222222-2222-2222-2222-222222222222");
+    let current_replica = node_id("33333333-3333-3333-3333-333333333333");
+    let old_master = node_id("44444444-4444-4444-4444-444444444444");
+    let old_replica = node_id("55555555-5555-5555-5555-555555555555");
+    let stale_worker = node_id("66666666-6666-6666-6666-666666666666");
     let mut state = State {
         epoch: Some(1),
         elected_leader_id: Some(me.id.clone()),
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now_millis())),
-            (worker.clone(), worker_node("worker.local", 9100, 0)),
+            (current_master.clone(), worker_node("worker.local", 9100, 0)),
         ]),
         partitions: Partitions {
             mapping: HashMap::from([(
                 1,
                 Partition {
-                    master: worker.clone(),
-                    replicas: vec![],
+                    master: current_master.clone(),
+                    replicas: replicas(vec![current_replica.clone(), old_replica.clone()]),
                 },
             )]),
-            old_mapping: HashMap::from([(
-                2,
-                Partition {
-                    master: stale_worker,
-                    replicas: vec![],
-                },
-            )]),
+            old_mapping: HashMap::from([
+                (
+                    1,
+                    Partition {
+                        master: old_master.clone(),
+                        replicas: replicas(vec![old_replica.clone()]),
+                    },
+                ),
+                (
+                    2,
+                    Partition {
+                        master: stale_worker.clone(),
+                        replicas: HashSet::new(),
+                    },
+                ),
+            ]),
         },
         workers_with_calculated_partitions: Default::default(),
     };
@@ -186,13 +202,28 @@ fn move_current_mapping_to_old_replaces_stale_old_mapping_and_clears_current_map
             .old_mapping
             .get(&1)
             .map(|partition| &partition.master),
-        Some(&worker)
+        Some(&current_master)
     );
-    assert!(!state.partitions.old_mapping.contains_key(&2));
+    assert_eq!(
+        state
+            .partitions
+            .old_mapping
+            .get(&1)
+            .map(|partition| &partition.replicas),
+        Some(&replicas(vec![current_replica, old_master, old_replica]))
+    );
+    assert_eq!(
+        state
+            .partitions
+            .old_mapping
+            .get(&2)
+            .map(|partition| &partition.master),
+        Some(&stale_worker)
+    );
 }
 
 #[tokio::test]
-async fn tick_does_not_recompute_while_old_mapping_is_present() {
+async fn tick_recomputes_while_old_mapping_is_present_and_merges_transition_mapping() {
     let me = me("11111111-1111-1111-1111-111111111111");
     let worker_a = node_id("22222222-2222-2222-2222-222222222222");
     let worker_b = node_id("33333333-3333-3333-3333-333333333333");
@@ -217,14 +248,14 @@ async fn tick_does_not_recompute_while_old_mapping_is_present() {
                 1,
                 Partition {
                     master: worker_a.clone(),
-                    replicas: vec![],
+                    replicas: HashSet::new(),
                 },
             )]),
             old_mapping: HashMap::from([(
                 1,
                 Partition {
                     master: worker_b.clone(),
-                    replicas: vec![],
+                    replicas: HashSet::new(),
                 },
             )]),
         },
@@ -236,9 +267,9 @@ async fn tick_does_not_recompute_while_old_mapping_is_present() {
     let mut output = vec![];
     service.tick(&mut output).await;
 
-    assert!(output.is_empty());
+    assert_eq!(output.len(), 3);
     let state = service.state.as_ref().expect("state exists");
-    assert_eq!(state.partitions.mapping.len(), 1);
+    assert_eq!(state.partitions.mapping.len(), TEST_PARTITIONS_AMOUNT);
     assert_eq!(state.partitions.old_mapping.len(), 1);
     assert_eq!(
         state
@@ -246,15 +277,15 @@ async fn tick_does_not_recompute_while_old_mapping_is_present() {
             .mapping
             .get(&1)
             .map(|partition| &partition.master),
-        Some(&worker_a)
+        Some(&worker_b)
     );
     assert_eq!(
         state
             .partitions
             .old_mapping
             .get(&1)
-            .map(|partition| &partition.master),
-        Some(&worker_b)
+            .map(|partition| (&partition.master, &partition.replicas)),
+        Some((&worker_a, &replicas(vec![worker_b.clone()])))
     );
-    assert!(!state.workers_with_calculated_partitions.contains(&worker_c));
+    assert!(state.workers_with_calculated_partitions.contains(&worker_c));
 }
