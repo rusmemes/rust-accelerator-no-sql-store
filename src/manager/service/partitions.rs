@@ -1,7 +1,9 @@
-use super::{state, Node, State};
+use super::State;
 use crate::common::{Me, NodeId};
-use crate::manager::domain::{ClusterNode, ClusterState, NodeProtocol, Partitions};
-use std::collections::{BTreeSet, HashSet};
+use crate::manager::domain;
+use crate::manager::domain::{ClusterState, NodeProtocol, Partitions};
+use crate::manager::service::state::Partition;
+use std::collections::BTreeSet;
 
 const PARTITIONS_AMOUNT: usize = 4096;
 
@@ -11,7 +13,7 @@ pub(super) fn worker_partitions(
     me: &Me,
     replication_factor: usize,
 ) {
-    if state.elected_leader_id.as_ref() == Some(&me.id) {
+    if state.elected_leader_id.as_ref() == Some(&me.id) && state.partitions.old_mapping.is_empty() {
         let current_keys = state
             .nodes
             .iter()
@@ -31,13 +33,12 @@ pub(super) fn worker_partitions(
                 .map(|it| it.clone())
                 .collect::<Vec<_>>();
 
-            move_current_partitions_to_old(state);
+            move_current_mapping_to_old(state);
 
             if !vec.is_empty() {
-                calculate_and_add_partitions(state, PARTITIONS_AMOUNT, replication_factor, &vec);
-                deduplicate_partitions(state);
+                calculate_new_mapping(state, PARTITIONS_AMOUNT, replication_factor, &vec);
 
-                let workers_state = create_new_workers_state(state, replication_factor);
+                let workers_state = create_new_workers_state(state);
 
                 state.workers_with_calculated_partitions = vec.into_iter().collect();
 
@@ -54,34 +55,8 @@ pub(super) fn worker_partitions(
     }
 }
 
-fn create_new_workers_state(state: &mut State, replication_factor: usize) -> ClusterState {
-    let items: Vec<ClusterNode> = state
-        .nodes
-        .iter()
-        .filter_map(|(id, node)| match node {
-            Node::Manager { .. } => None,
-            Node::Worker {
-                host,
-                port,
-                last_heartbeat,
-                partitions,
-            } => Some(ClusterNode::Worker {
-                id: id.clone(),
-                host: host.clone(),
-                port: *port,
-                last_heartbeat: *last_heartbeat,
-                partitions: Partitions {
-                    masters: partitions.masters.clone(),
-                    old_masters: partitions.old_masters.clone(),
-                    replicas: partitions.replicas.clone(),
-                    old_replicas: partitions.old_replicas.clone(),
-                },
-            }),
-        })
-        .collect();
-
+fn create_new_workers_state(state: &mut State) -> ClusterState {
     ClusterState {
-        config: Some(crate::manager::domain::Config { replication_factor }),
         epoch: state
             .epoch
             .expect("present as elected leader id is also present"),
@@ -89,69 +64,70 @@ fn create_new_workers_state(state: &mut State, replication_factor: usize) -> Clu
             .elected_leader_id
             .clone()
             .expect("existing checked above"),
-        items: items.clone(),
+        items: vec![],
+        partitions: Partitions {
+            mapping: state
+                .partitions
+                .mapping
+                .iter()
+                .map(|(id, partition)| {
+                    (
+                        *id,
+                        domain::Partition {
+                            master: partition.master.clone(),
+                            replicas: partition.replicas.clone(),
+                        },
+                    )
+                })
+                .collect(),
+            old_mapping: state
+                .partitions
+                .old_mapping
+                .iter()
+                .map(|(id, partition)| {
+                    (
+                        *id,
+                        domain::Partition {
+                            master: partition.master.clone(),
+                            replicas: partition.replicas.clone(),
+                        },
+                    )
+                })
+                .collect(),
+        },
     }
 }
 
-fn deduplicate_partitions(state: &mut State) {
-    let mut seen = HashSet::new();
-    state
-        .nodes
-        .values_mut()
-        .filter(|node| node.is_worker())
-        .for_each(|node| {
-            if let Node::Worker { partitions, .. } = node {
-                retain_unseen(&mut partitions.masters, &mut seen);
-                retain_unseen(&mut partitions.replicas, &mut seen);
-                retain_unseen(&mut partitions.old_masters, &mut seen);
-                retain_unseen(&mut partitions.old_replicas, &mut seen);
-                seen.clear();
-            }
-        });
+fn move_current_mapping_to_old(state: &mut State) {
+    state.partitions.old_mapping = std::mem::take(&mut state.partitions.mapping);
 }
 
-fn retain_unseen(partitions: &mut Vec<u16>, seen: &mut HashSet<u16>) {
-    partitions.retain(|partition| seen.insert(*partition));
-}
-
-fn move_current_partitions_to_old(state: &mut State) {
-    state
-        .nodes
-        .values_mut()
-        .filter(|node| node.is_worker())
-        .for_each(|node| {
-            if let Node::Worker { partitions, .. } = node {
-                partitions.old_masters.append(&mut partitions.masters);
-                partitions.old_replicas.append(&mut partitions.replicas);
-            }
-        });
-}
-
-fn calculate_and_add_partitions(
+fn calculate_new_mapping(
     state: &mut State,
     partitions_amount: usize,
     replication_factor: usize,
     vec: &Vec<NodeId>,
 ) {
+    let mapping = &mut state.partitions.mapping;
     for partition in 0..partitions_amount {
         let master_partition_index = partition % vec.len();
         for replica in 0..replication_factor {
             let index = calc_replica_index(vec.len(), master_partition_index, replica);
             let id = vec.get(index).unwrap();
-            let node = state.nodes.get_mut(id).unwrap();
-            if let Node::Worker {
-                partitions:
-                    state::Partitions {
-                        masters, replicas, ..
+            if replica == 0 {
+                mapping.insert(
+                    partition as u16,
+                    Partition {
+                        master: id.clone(),
+                        replicas: vec![],
                     },
-                ..
-            } = node
-            {
-                if replica == 0 {
-                    masters.push(partition as u16);
-                } else {
-                    replicas.push(partition as u16);
-                }
+                );
+            } else {
+                mapping
+                    .get_mut(&(partition as u16))
+                    .expect("entry is added on replica == 0")
+                    .replicas
+                    .push(id.clone());
             }
         }
     }

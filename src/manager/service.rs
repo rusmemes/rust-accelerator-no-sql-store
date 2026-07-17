@@ -1,5 +1,5 @@
 use crate::common::{now_millis, Config, Me};
-use crate::manager::domain::{ClusterState, Heartbeat, NodeProtocol};
+use crate::manager::domain::{ClusterState, Heartbeat, NodeProtocol, NodeType};
 use cluster_state::{handle_cluster_state, handle_get_cluster_state};
 use connection::{handle_new_connection, handle_node_disconnected};
 use election::{
@@ -28,6 +28,7 @@ mod heartbeat;
 mod partitions;
 mod state;
 
+use crate::manager::service::state::Partitions;
 use state::{Node, State};
 
 // to make nodes trying to start elections at different times, we randomize the election timeout interval
@@ -63,12 +64,7 @@ impl ManagerService {
             let config = self.config.read().await;
             let replication_factor = config.replication_factor.expect("required and has default");
             drop(config);
-            worker_partitions(
-                state,
-                output,
-                &self.me,
-                replication_factor,
-            );
+            worker_partitions(state, output, &self.me, replication_factor);
         }
         tracing::debug!("state: {:?}", self.state);
         tracing::debug!("elections: {:?}", self.elections);
@@ -87,19 +83,17 @@ impl ManagerService {
                     heartbeat: Heartbeat { id, ts },
                     ..
                 } => handle_heartbeat(output, state, id, ts, &self.me),
-                NodeProtocol::GetClusterState { id } => {
-                    handle_get_cluster_state(output, state, id, &self.config).await
-                }
+                NodeProtocol::GetClusterState { id } => handle_get_cluster_state(output, state, id),
                 NodeProtocol::ClusterState {
                     state:
                         ClusterState {
                             epoch,
                             leader_id,
                             items,
-                            config: _,
+                            partitions,
                         },
                     ..
-                } => handle_cluster_state(output, state, epoch, leader_id, items),
+                } => handle_cluster_state(output, state, epoch, leader_id, items, partitions),
                 NodeProtocol::VoteRequest { id, epoch, ts } => {
                     tracing::info!("VoteRequest: {:?} {:?}", id, epoch);
                     handle_vote_request(output, state, id, epoch, ts, &mut self.elections);
@@ -137,16 +131,18 @@ impl ManagerService {
             let mut nodes = HashMap::new();
             nodes.insert(
                 self.me.id.clone(),
-                Node::Manager {
+                Node {
                     host: self.me.host.clone(),
                     port: self.me.port,
                     last_heartbeat: now_millis(),
+                    node_type: NodeType::Manager,
                 },
             );
             self.state = Some(State {
                 epoch: None,
                 elected_leader_id: None,
                 nodes,
+                partitions: Partitions::default(),
                 workers_with_calculated_partitions: Default::default(),
             });
             vec![NodeProtocol::NewConnection {
@@ -159,16 +155,18 @@ impl ManagerService {
             let mut nodes = HashMap::new();
             nodes.insert(
                 self.me.id.clone(),
-                Node::Manager {
+                Node {
                     host: self.me.host.clone(),
                     port: self.me.port,
                     last_heartbeat: now_millis(),
+                    node_type: NodeType::Manager,
                 },
             );
             self.state = Some(State {
                 epoch: Some(0),
                 elected_leader_id: None,
                 nodes,
+                partitions: Partitions::default(),
                 workers_with_calculated_partitions: Default::default(),
             });
             vec![]

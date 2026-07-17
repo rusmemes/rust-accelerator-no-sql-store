@@ -1,7 +1,7 @@
 use super::*;
 use crate::manager::domain::{self, ClusterNode, NodeProtocol};
 use crate::manager::grpc::api::v1::{worker_event, Leader};
-use crate::manager::grpc::common::v1::{node, Manager, Node, Partitions, Worker};
+use crate::manager::grpc::common::v1::NodeType as GrpcNodeType;
 use crate::manager::grpc::test_support::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -64,7 +64,7 @@ async fn output_routes_leader_to_manager_session() {
 }
 
 #[tokio::test]
-async fn output_routes_cluster_state_to_worker_session_includes_config() {
+async fn output_routes_cluster_state_to_worker_session_includes_partitions() {
     let me = me("11111111-1111-1111-1111-111111111111");
     let worker_id = node_id("22222222-2222-2222-2222-222222222222");
     let manager_node_id = node_id("33333333-3333-3333-3333-333333333333");
@@ -82,28 +82,37 @@ async fn output_routes_cluster_state_to_worker_session_includes_config() {
         5,
         manager_node_id.clone(),
         vec![
-            ClusterNode::Manager {
+            ClusterNode {
                 id: manager_node_id.clone(),
                 host: "manager.local".to_string(),
                 port: 9001,
                 last_heartbeat: 10,
+                node_type: domain::NodeType::Manager,
             },
-            ClusterNode::Worker {
+            ClusterNode {
                 id: worker_node_id.clone(),
                 host: "worker.local".to_string(),
                 port: 9100,
                 last_heartbeat: 11,
-                partitions: domain::Partitions {
-                    masters: vec![1, 2],
-                    replicas: vec![3, 4],
-                    old_masters: vec![5],
-                    old_replicas: vec![6],
-                },
+                node_type: domain::NodeType::Worker,
             },
         ],
-        Some(domain::Config {
-            replication_factor: 4,
-        }),
+        domain::Partitions {
+            mapping: HashMap::from([(
+                7,
+                domain::Partition {
+                    master: worker_node_id.clone(),
+                    replicas: vec![manager_node_id.clone()],
+                },
+            )]),
+            old_mapping: HashMap::from([(
+                6,
+                domain::Partition {
+                    master: manager_node_id.clone(),
+                    replicas: vec![worker_node_id.clone()],
+                },
+            )]),
+        },
     )
     .await;
 
@@ -115,50 +124,38 @@ async fn output_routes_cluster_state_to_worker_session_includes_config() {
 
     assert_eq!(cluster_state.epoch, 5);
     assert_eq!(cluster_state.leader_id, manager_node_id.to_string());
-    assert_eq!(
-        cluster_state.config.as_ref().map(|c| c.replication_factor),
-        Some(4)
-    );
     assert_eq!(cluster_state.nodes.len(), 2);
-    assert!(cluster_state.nodes.iter().any(|node| matches!(
-        &node.payload,
-        Some(node::Payload::Manager(Manager {
-            id,
-            addr: Some(Addr { host, port }),
-            last_heartbeat,
-        })) if *id == manager_node_id.to_string()
-            && host == "manager.local"
-            && *port == 9001
-            && *last_heartbeat == 10
-    )));
-    assert!(cluster_state.nodes.iter().any(|node| matches!(
-        &node.payload,
-        Some(node::Payload::Worker(Worker {
-            id,
-            addr: Some(Addr { host, port }),
-            last_heartbeat,
-            partitions:
-                Some(Partitions {
-                    masters,
-                    replicas,
-                    old_masters,
-                    old_replicas,
-                }),
-        })) if *id == worker_node_id.to_string()
-            && host == "worker.local"
-            && *port == 9100
-            && *last_heartbeat == 11
-            && *masters == vec![1, 2]
-            && *replicas == vec![3, 4]
-            && *old_masters == vec![5]
-            && *old_replicas == vec![6]
-    )));
+    assert!(cluster_state.nodes.iter().any(|node| {
+        node.id == manager_node_id.to_string()
+            && node
+                .addr
+                .as_ref()
+                .is_some_and(|addr| addr.host == "manager.local" && addr.port == 9001)
+            && node.last_heartbeat == 10
+            && node.node_type == GrpcNodeType::Manager as i32
+    }));
+    assert!(cluster_state.nodes.iter().any(|node| {
+        node.id == worker_node_id.to_string()
+            && node
+                .addr
+                .as_ref()
+                .is_some_and(|addr| addr.host == "worker.local" && addr.port == 9100)
+            && node.last_heartbeat == 11
+            && node.node_type == GrpcNodeType::Worker as i32
+    }));
+    let partitions = cluster_state.partitions.expect("partitions");
+    let mapping = partitions.mapping.get(&7).expect("mapping");
+    assert_eq!(mapping.master, worker_node_id.to_string());
+    assert_eq!(mapping.replicas, vec![manager_node_id.to_string()]);
+    let old_mapping = partitions.old_mapping.get(&6).expect("old mapping");
+    assert_eq!(old_mapping.master, manager_node_id.to_string());
+    assert_eq!(old_mapping.replicas, vec![worker_node_id.to_string()]);
 
     let _ = me;
 }
 
 #[tokio::test]
-async fn output_routes_cluster_state_to_manager_session_includes_config() {
+async fn output_routes_cluster_state_to_manager_session_includes_partitions() {
     let me = me("11111111-1111-1111-1111-111111111111");
     let manager_id = node_id("22222222-2222-2222-2222-222222222222");
     let (tx, _rx) = tokio::sync::mpsc::channel(4);
@@ -174,15 +171,14 @@ async fn output_routes_cluster_state_to_manager_session_includes_config() {
         manager_id.clone(),
         2,
         me.id.clone(),
-        vec![ClusterNode::Manager {
+        vec![ClusterNode {
             id: me.id.clone(),
             host: "self.local".to_string(),
             port: 7000,
             last_heartbeat: 77,
+            node_type: domain::NodeType::Manager,
         }],
-        Some(domain::Config {
-            replication_factor: 2,
-        }),
+        domain::Partitions::default(),
     )
     .await;
 
@@ -194,24 +190,23 @@ async fn output_routes_cluster_state_to_manager_session_includes_config() {
 
     assert_eq!(cluster_state.epoch, 2);
     assert_eq!(cluster_state.leader_id, me.id.to_string());
-    assert_eq!(
-        cluster_state.config.as_ref().map(|c| c.replication_factor),
-        Some(2)
-    );
     assert_eq!(cluster_state.nodes.len(), 1);
-    assert!(matches!(
-        cluster_state.nodes.as_slice(),
-        [Node {
-            payload: Some(node::Payload::Manager(Manager {
-                id,
-                addr: Some(Addr { host, port }),
-                last_heartbeat,
-            })),
-        }] if *id == me.id.to_string()
-            && host == "self.local"
-            && *port == 7000
-            && *last_heartbeat == 77
-    ));
+    let node = cluster_state.nodes.first().expect("node");
+    assert_eq!(node.id, me.id.to_string());
+    assert!(
+        node.addr
+            .as_ref()
+            .is_some_and(|addr| addr.host == "self.local" && addr.port == 7000)
+    );
+    assert_eq!(node.last_heartbeat, 77);
+    assert_eq!(node.node_type, GrpcNodeType::Manager as i32);
+    assert!(
+        cluster_state
+            .partitions
+            .expect("partitions")
+            .mapping
+            .is_empty()
+    );
 }
 
 #[tokio::test]

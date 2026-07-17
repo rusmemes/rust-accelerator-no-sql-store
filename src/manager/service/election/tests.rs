@@ -2,7 +2,7 @@ use super::*;
 use crate::common::now_millis;
 use crate::manager::domain::NodeProtocol;
 use crate::manager::service::test_support::*;
-use crate::manager::service::{Node, State};
+use crate::manager::service::State;
 use std::collections::{HashMap, HashSet};
 
 #[tokio::test]
@@ -17,23 +17,10 @@ async fn vote_request_adds_new_election_reuses_candidate_and_ignores_stale_epoch
         elected_leader_id: Some(me.id.clone()),
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now)),
-            (
-                peer_one.clone(),
-                Node::Manager {
-                    host: "peer-one.local".to_string(),
-                    port: 9001,
-                    last_heartbeat: now,
-                },
-            ),
-            (
-                peer_two.clone(),
-                Node::Manager {
-                    host: "peer-two.local".to_string(),
-                    port: 9002,
-                    last_heartbeat: now,
-                },
-            ),
+            (peer_one.clone(), node("peer-one.local", 9001, now)),
+            (peer_two.clone(), node("peer-two.local", 9002, now)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -98,15 +85,9 @@ async fn vote_response_for_unknown_leader_requests_cluster_state() {
         elected_leader_id: Some(me.id.clone()),
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now)),
-            (
-                peer.clone(),
-                Node::Manager {
-                    host: "peer.local".to_string(),
-                    port: 9001,
-                    last_heartbeat: now,
-                },
-            ),
+            (peer.clone(), node("peer.local", 9001, now)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
     service.elections.insert(
@@ -146,23 +127,10 @@ async fn vote_responses_elect_self_and_broadcast_leader() {
         elected_leader_id: Some(me.id.clone()),
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now)),
-            (
-                peer_one.clone(),
-                Node::Manager {
-                    host: "peer-one.local".to_string(),
-                    port: 9001,
-                    last_heartbeat: 0,
-                },
-            ),
-            (
-                peer_two.clone(),
-                Node::Manager {
-                    host: "peer-two.local".to_string(),
-                    port: 9002,
-                    last_heartbeat: 0,
-                },
-            ),
+            (peer_one.clone(), node("peer-one.local", 9001, 0)),
+            (peer_two.clone(), node("peer-two.local", 9002, 0)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
     service.elections.insert(
@@ -226,19 +194,10 @@ async fn vote_responses_complete_election_with_worker_nodes_present() {
         elected_leader_id: Some(me.id.clone()),
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now)),
-            (
-                manager_peer.clone(),
-                Node::Manager {
-                    host: "manager.local".to_string(),
-                    port: 9001,
-                    last_heartbeat: 0,
-                },
-            ),
-            (
-                worker_peer.clone(),
-                worker_node("worker.local", 9100, 0, vec![1, 2]),
-            ),
+            (manager_peer.clone(), node("manager.local", 9001, 0)),
+            (worker_peer.clone(), worker_node("worker.local", 9100, 0)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
     service.elections.insert(
@@ -291,6 +250,7 @@ async fn leader_message_updates_epoch_and_clears_pending_elections() {
             (me.id.clone(), fresh_node(&me, now)),
             (leader.clone(), node("leader.local", 9001, now)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
     service.elections.insert(
@@ -315,7 +275,7 @@ async fn leader_message_updates_epoch_and_clears_pending_elections() {
     assert_eq!(state.epoch, Some(2));
     assert_eq!(state.elected_leader_id, Some(leader.clone()));
     assert_eq!(
-        *state.nodes.get_mut(&leader).unwrap().last_heartbeat_mut(),
+        state.nodes.get_mut(&leader).unwrap().last_heartbeat,
         now + 10
     );
     assert!(service.elections.is_empty());
@@ -335,11 +295,9 @@ async fn leader_with_unknown_id_requests_cluster_state_from_manager_peers_only()
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now)),
             (manager_peer.clone(), node("manager.local", 9001, now)),
-            (
-                worker_peer.clone(),
-                worker_node("worker.local", 9100, now, vec![1]),
-            ),
+            (worker_peer.clone(), worker_node("worker.local", 9100, now)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -371,15 +329,9 @@ async fn leader_messages_only_move_state_forward() {
         elected_leader_id: None,
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now)),
-            (
-                leader.clone(),
-                Node::Manager {
-                    host: "leader.local".to_string(),
-                    port: 9001,
-                    last_heartbeat: now,
-                },
-            ),
+            (leader.clone(), node("leader.local", 9001, now)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -398,14 +350,14 @@ async fn leader_messages_only_move_state_forward() {
         Some(leader.clone())
     );
     assert_eq!(
-        *service
+        service
             .state
             .as_mut()
             .unwrap()
             .nodes
             .get_mut(&leader)
             .unwrap()
-            .last_heartbeat_mut(),
+            .last_heartbeat,
         now
     );
 
@@ -435,15 +387,9 @@ async fn tick_starts_election_when_leader_is_missing() {
         elected_leader_id: None,
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now_millis())),
-            (
-                peer.clone(),
-                Node::Manager {
-                    host: "peer.local".to_string(),
-                    port: 9001,
-                    last_heartbeat: 0,
-                },
-            ),
+            (peer.clone(), node("peer.local", 9001, 0)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -473,11 +419,9 @@ async fn tick_starts_a_new_election_only_for_manager_peers() {
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, future)),
             (manager_peer.clone(), node("manager.local", 9001, 0)),
-            (
-                worker_peer.clone(),
-                worker_node("worker.local", 9100, 0, vec![1]),
-            ),
+            (worker_peer.clone(), worker_node("worker.local", 9100, 0)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 

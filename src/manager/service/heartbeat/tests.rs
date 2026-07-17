@@ -2,7 +2,7 @@ use super::*;
 use crate::common::now_millis;
 use crate::manager::domain::{Heartbeat, NodeProtocol};
 use crate::manager::service::test_support::*;
-use crate::manager::service::{Node, State};
+use crate::manager::service::State;
 use std::collections::HashMap;
 
 #[tokio::test]
@@ -18,6 +18,7 @@ async fn heartbeat_from_unknown_node_requests_cluster_state_from_peers() {
             (me.id.clone(), fresh_node(&me, now)),
             (peer_id.clone(), node("peer.local", 9001, 0)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -56,6 +57,7 @@ async fn heartbeat_from_known_peer_is_forwarded_only_when_we_are_leader() {
             (peer_one.clone(), node("peer-one.local", 9001, 0)),
             (peer_two.clone(), node("peer-two.local", 9002, 0)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -89,14 +91,14 @@ async fn heartbeat_from_known_peer_is_forwarded_only_when_we_are_leader() {
 
     assert!(not_forwarded.is_empty());
     assert_eq!(
-        *service
+        service
             .state
             .as_mut()
             .unwrap()
             .nodes
             .get_mut(&peer_one)
             .unwrap()
-            .last_heartbeat_mut(),
+            .last_heartbeat,
         43
     );
 }
@@ -112,12 +114,10 @@ async fn heartbeat_from_worker_updates_worker_without_forwarding() {
         elected_leader_id: Some(me.id.clone()),
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now_millis())),
-            (
-                worker.clone(),
-                worker_node("worker.local", 9100, 12, vec![1, 2]),
-            ),
+            (worker.clone(), worker_node("worker.local", 9100, 12)),
             (manager_peer.clone(), node("manager.local", 9001, 0)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -136,14 +136,14 @@ async fn heartbeat_from_worker_updates_worker_without_forwarding() {
             if recipient_id == &manager_peer && heartbeat.id == worker && heartbeat.ts == 44
     ));
     assert_eq!(
-        *service
+        service
             .state
             .as_mut()
             .unwrap()
             .nodes
             .get_mut(&worker)
             .unwrap()
-            .last_heartbeat_mut(),
+            .last_heartbeat,
         44
     );
 }
@@ -159,15 +159,9 @@ async fn tick_emits_heartbeats_for_stale_self_heartbeat() {
         elected_leader_id: Some(me.id.clone()),
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now)),
-            (
-                peer_id.clone(),
-                Node::Manager {
-                    host: "peer.local".to_string(),
-                    port: 9001,
-                    last_heartbeat: 0,
-                },
-            ),
+            (peer_id.clone(), node("peer.local", 9001, 0)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -192,15 +186,9 @@ async fn tick_clears_stale_remote_leader_without_emitting_messages() {
         elected_leader_id: Some(leader.clone()),
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now)),
-            (
-                leader.clone(),
-                Node::Manager {
-                    host: "leader.local".to_string(),
-                    port: 9001,
-                    last_heartbeat: now - 1_000,
-                },
-            ),
+            (leader.clone(), node("leader.local", 9001, now - 1_000)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 

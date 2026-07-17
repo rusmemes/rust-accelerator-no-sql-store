@@ -1,34 +1,40 @@
 use super::*;
 use crate::common::now_millis;
-use crate::manager::domain::{self, ClusterNode, NodeProtocol};
+use crate::manager::domain::{ClusterNode, NodeProtocol, NodeType, Partition, Partitions};
 use crate::manager::service::test_support::*;
-use crate::manager::service::{Node, State};
+use crate::manager::service::State;
 use std::collections::HashMap;
+
+fn cluster_node(
+    id: crate::common::NodeId,
+    host: &str,
+    port: u32,
+    last_heartbeat: u64,
+    node_type: NodeType,
+) -> ClusterNode {
+    ClusterNode {
+        id,
+        host: host.to_string(),
+        port,
+        last_heartbeat,
+        node_type,
+    }
+}
 
 #[tokio::test]
 async fn get_cluster_state_returns_current_cluster_snapshot() {
     let me = me("11111111-1111-1111-1111-111111111111");
     let peer_id = node_id("22222222-2222-2222-2222-222222222222");
-    let (mut service, config) = service(me.clone());
-    {
-        let mut guard = config.write().await;
-        guard.replication_factor = Some(4);
-    }
+    let (mut service, _config) = service(me.clone());
     let now = now_millis();
     service.state = Some(State {
         epoch: Some(3),
         elected_leader_id: Some(me.id.clone()),
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now)),
-            (
-                peer_id.clone(),
-                Node::Manager {
-                    host: "peer.local".to_string(),
-                    port: 9001,
-                    last_heartbeat: 120,
-                },
-            ),
+            (peer_id.clone(), node("peer.local", 9001, 120)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -57,16 +63,16 @@ async fn get_cluster_state_returns_current_cluster_snapshot() {
 
     assert_eq!(cluster_state.epoch, 3);
     assert_eq!(cluster_state.leader_id, me.id);
-    let config = cluster_state.config.clone().unwrap();
-    assert_eq!(config.replication_factor, 4);
     assert_eq!(cluster_state.items.len(), 2);
+    assert!(cluster_state.partitions.mapping.is_empty());
+    assert!(cluster_state.partitions.old_mapping.is_empty());
 }
 
 #[tokio::test]
-async fn get_cluster_state_returns_worker_items_with_partitions() {
+async fn get_cluster_state_returns_worker_items_and_partition_mapping() {
     let me = me("11111111-1111-1111-1111-111111111111");
     let worker_id = node_id("22222222-2222-2222-2222-222222222222");
-    let (mut service, config) = service(me.clone());
+    let (mut service, _config) = service(me.clone());
     let now = now_millis();
     service.state = Some(State {
         epoch: Some(3),
@@ -75,9 +81,19 @@ async fn get_cluster_state_returns_worker_items_with_partitions() {
             (me.id.clone(), fresh_node(&me, now)),
             (
                 worker_id.clone(),
-                worker_node("worker.local", 9100, now - 5, vec![4, 2, 9]),
+                worker_node("worker.local", 9100, now - 5),
             ),
         ]),
+        partitions: crate::manager::service::state::Partitions {
+            mapping: HashMap::from([(
+                7,
+                crate::manager::service::state::Partition {
+                    master: worker_id.clone(),
+                    replicas: vec![me.id.clone()],
+                },
+            )]),
+            old_mapping: Default::default(),
+        },
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -86,9 +102,7 @@ async fn get_cluster_state_returns_worker_items_with_partitions() {
         &mut output,
         service.state.as_mut().unwrap(),
         worker_id.clone(),
-        config.as_ref(),
-    )
-    .await;
+    );
 
     let cluster_state = match output.as_slice() {
         [
@@ -103,34 +117,25 @@ async fn get_cluster_state_returns_worker_items_with_partitions() {
         other => panic!("unexpected output: {:?}", other),
     };
 
-    let worker_item = cluster_state
-        .items
-        .iter()
-        .find(|item| matches!(item, ClusterNode::Worker { id, .. } if id == &worker_id))
-        .expect("worker node present");
-
-    assert!(matches!(
-        worker_item,
-        ClusterNode::Worker {
-            id,
-            host,
-            port,
-            last_heartbeat,
-            partitions,
-        } if id == &worker_id
-            && host == "worker.local"
-            && *port == 9100
-            && *last_heartbeat == now - 5
-            && partitions.masters == vec![4, 2, 9]
-            && partitions.replicas.is_empty()
-            && partitions.old_masters.is_empty()
-            && partitions.old_replicas.is_empty()
-    ));
-    assert_eq!(cluster_state.config.clone().unwrap().replication_factor, 3);
+    assert!(cluster_state.items.iter().any(|item| {
+        item.id == worker_id
+            && item.host == "worker.local"
+            && item.port == 9100
+            && item.last_heartbeat == now - 5
+            && item.node_type == NodeType::Worker
+    }));
+    assert_eq!(
+        cluster_state
+            .partitions
+            .mapping
+            .get(&7)
+            .map(|partition| (&partition.master, &partition.replicas)),
+        Some((&worker_id, &vec![me.id.clone()]))
+    );
 }
 
 #[tokio::test]
-async fn cluster_state_updates_known_nodes_and_requests_unknown_ones() {
+async fn cluster_state_updates_known_nodes_and_requests_unknown_managers() {
     let me = me("11111111-1111-1111-1111-111111111111");
     let peer = node_id("22222222-2222-2222-2222-222222222222");
     let unknown = node_id("33333333-3333-3333-3333-333333333333");
@@ -143,6 +148,7 @@ async fn cluster_state_updates_known_nodes_and_requests_unknown_ones() {
             (me.id.clone(), fresh_node(&me, now)),
             (peer.clone(), node("peer.local", 9001, now)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -153,19 +159,16 @@ async fn cluster_state_updates_known_nodes_and_requests_unknown_ones() {
         2,
         me.id.clone(),
         vec![
-            ClusterNode::Manager {
-                id: me.id.clone(),
-                host: me.host.clone(),
-                port: me.port,
-                last_heartbeat: now + 1,
-            },
-            ClusterNode::Manager {
-                id: unknown.clone(),
-                host: "unknown.local".to_string(),
-                port: 9002,
-                last_heartbeat: now + 2,
-            },
+            cluster_node(me.id.clone(), &me.host, me.port, now + 1, NodeType::Manager),
+            cluster_node(
+                unknown.clone(),
+                "unknown.local",
+                9002,
+                now + 2,
+                NodeType::Manager,
+            ),
         ],
+        Partitions::default(),
     );
 
     assert!(matches!(
@@ -177,14 +180,8 @@ async fn cluster_state_updates_known_nodes_and_requests_unknown_ones() {
     let state = service.state.as_mut().unwrap();
     assert_eq!(state.epoch, Some(2));
     assert_eq!(state.elected_leader_id, Some(me.id.clone()));
-    assert_eq!(
-        *state.nodes.get_mut(&me.id).unwrap().last_heartbeat_mut(),
-        now + 1
-    );
-    assert_eq!(
-        *state.nodes.get_mut(&peer).unwrap().last_heartbeat_mut(),
-        now
-    );
+    assert_eq!(state.nodes.get(&me.id).unwrap().last_heartbeat, now + 1);
+    assert_eq!(state.nodes.get(&peer).unwrap().last_heartbeat, now);
 }
 
 #[tokio::test]
@@ -199,15 +196,9 @@ async fn cluster_state_accepts_new_epoch_same_leader_and_rejects_conflicts() {
         elected_leader_id: None,
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now)),
-            (
-                leader.clone(),
-                Node::Manager {
-                    host: "leader.local".to_string(),
-                    port: 9001,
-                    last_heartbeat: now,
-                },
-            ),
+            (leader.clone(), node("leader.local", 9001, now)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -218,44 +209,13 @@ async fn cluster_state_accepts_new_epoch_same_leader_and_rejects_conflicts() {
         4,
         leader.clone(),
         vec![
-            ClusterNode::Manager {
-                id: me.id.clone(),
-                host: me.host.clone(),
-                port: me.port,
-                last_heartbeat: now,
-            },
-            ClusterNode::Manager {
-                id: leader.clone(),
-                host: "leader.local".to_string(),
-                port: 9001,
-                last_heartbeat: now,
-            },
+            cluster_node(me.id.clone(), &me.host, me.port, now, NodeType::Manager),
+            cluster_node(leader.clone(), "leader.local", 9001, now, NodeType::Manager),
         ],
+        Partitions::default(),
     );
     assert!(first.is_empty());
     assert_eq!(service.state.as_ref().unwrap().epoch, Some(4));
-    assert_eq!(
-        *service
-            .state
-            .as_mut()
-            .unwrap()
-            .nodes
-            .get_mut(&me.id)
-            .unwrap()
-            .last_heartbeat_mut(),
-        now
-    );
-    assert_eq!(
-        *service
-            .state
-            .as_mut()
-            .unwrap()
-            .nodes
-            .get_mut(&leader)
-            .unwrap()
-            .last_heartbeat_mut(),
-        now
-    );
 
     let mut same_epoch_same_leader = vec![];
     handle_cluster_state(
@@ -263,23 +223,25 @@ async fn cluster_state_accepts_new_epoch_same_leader_and_rejects_conflicts() {
         service.state.as_mut().unwrap(),
         4,
         leader.clone(),
-        vec![ClusterNode::Manager {
-            id: me.id.clone(),
-            host: me.host.clone(),
-            port: me.port,
-            last_heartbeat: now + 1,
-        }],
+        vec![cluster_node(
+            me.id.clone(),
+            &me.host,
+            me.port,
+            now + 1,
+            NodeType::Manager,
+        )],
+        Partitions::default(),
     );
     assert!(same_epoch_same_leader.is_empty());
     assert_eq!(
-        *service
+        service
             .state
-            .as_mut()
+            .as_ref()
             .unwrap()
             .nodes
-            .get_mut(&me.id)
+            .get(&me.id)
             .unwrap()
-            .last_heartbeat_mut(),
+            .last_heartbeat,
         now + 1
     );
 
@@ -289,30 +251,32 @@ async fn cluster_state_accepts_new_epoch_same_leader_and_rejects_conflicts() {
         service.state.as_mut().unwrap(),
         4,
         other_leader,
-        vec![ClusterNode::Manager {
-            id: me.id.clone(),
-            host: me.host.clone(),
-            port: me.port,
-            last_heartbeat: now + 2,
-        }],
+        vec![cluster_node(
+            me.id.clone(),
+            &me.host,
+            me.port,
+            now + 2,
+            NodeType::Manager,
+        )],
+        Partitions::default(),
     );
     assert!(conflict.is_empty());
     assert_eq!(service.state.as_ref().unwrap().epoch, Some(4));
     assert_eq!(
-        *service
+        service
             .state
-            .as_mut()
+            .as_ref()
             .unwrap()
             .nodes
-            .get_mut(&me.id)
+            .get(&me.id)
             .unwrap()
-            .last_heartbeat_mut(),
+            .last_heartbeat,
         now + 1
     );
 }
 
 #[tokio::test]
-async fn cluster_state_overwrites_known_worker_partitions_and_adds_unknown_workers() {
+async fn cluster_state_applies_partition_mapping_and_adds_unknown_workers() {
     let me = me("11111111-1111-1111-1111-111111111111");
     let worker = node_id("22222222-2222-2222-2222-222222222222");
     let other_worker = node_id("33333333-3333-3333-3333-333333333333");
@@ -323,11 +287,9 @@ async fn cluster_state_overwrites_known_worker_partitions_and_adds_unknown_worke
         elected_leader_id: Some(me.id.clone()),
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now)),
-            (
-                worker.clone(),
-                worker_node("worker.local", 9100, now, vec![1, 2]),
-            ),
+            (worker.clone(), worker_node("worker.local", 9100, now)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -338,65 +300,65 @@ async fn cluster_state_overwrites_known_worker_partitions_and_adds_unknown_worke
         2,
         me.id.clone(),
         vec![
-            ClusterNode::Worker {
-                id: worker.clone(),
-                host: "worker.local".to_string(),
-                port: 9100,
-                last_heartbeat: now + 10,
-                partitions: domain::Partitions {
-                    masters: vec![2, 3, 3, 4],
-                    replicas: vec![5, 6],
-                    old_masters: vec![10],
-                    old_replicas: vec![11],
-                },
-            },
-            ClusterNode::Worker {
-                id: other_worker.clone(),
-                host: "worker-two.local".to_string(),
-                port: 9101,
-                last_heartbeat: now + 20,
-                partitions: domain::Partitions {
-                    masters: vec![7, 8],
-                    replicas: vec![9],
-                    old_masters: vec![12],
-                    old_replicas: vec![13],
-                },
-            },
+            cluster_node(
+                worker.clone(),
+                "worker.local",
+                9100,
+                now + 10,
+                NodeType::Worker,
+            ),
+            cluster_node(
+                other_worker.clone(),
+                "worker-two.local",
+                9101,
+                now + 20,
+                NodeType::Worker,
+            ),
         ],
+        Partitions {
+            mapping: HashMap::from([(
+                9,
+                Partition {
+                    master: worker.clone(),
+                    replicas: vec![other_worker.clone()],
+                },
+            )]),
+            old_mapping: HashMap::from([(
+                8,
+                Partition {
+                    master: other_worker.clone(),
+                    replicas: vec![worker.clone()],
+                },
+            )]),
+        },
     );
 
     assert!(output.is_empty());
     let state = service.state.as_ref().unwrap();
-    assert!(matches!(
-        state.nodes.get(&worker),
-        Some(Node::Worker {
-            host,
-            port,
-            last_heartbeat,
-            partitions,
-        }) if host == "worker.local"
-            && *port == 9100
-            && *last_heartbeat == now + 10
-            && partitions.masters == vec![2, 3, 3, 4]
-            && partitions.replicas == vec![5, 6]
-            && partitions.old_masters == vec![10]
-            && partitions.old_replicas == vec![11]
-    ));
-    assert!(matches!(
-        state.nodes.get(&other_worker),
-        Some(Node::Worker {
-            host,
-            port,
-            last_heartbeat,
-            partitions,
-        }) if host == "worker-two.local"
-            && *port == 9101
-            && *last_heartbeat == now + 20
-            && partitions.masters == vec![7, 8]
-            && partitions.replicas == vec![9]
-            && partitions.old_masters == vec![12]
-            && partitions.old_replicas == vec![13]
-    ));
+    assert_eq!(state.nodes.get(&worker).unwrap().last_heartbeat, now + 10);
+    assert_eq!(
+        state
+            .nodes
+            .get(&other_worker)
+            .map(|node| (&node.host, node.port, node.node_type)),
+        Some((&"worker-two.local".to_string(), 9101, NodeType::Worker))
+    );
+    assert_eq!(
+        state
+            .partitions
+            .mapping
+            .get(&9)
+            .map(|partition| (&partition.master, &partition.replicas)),
+        Some((&worker, &vec![other_worker.clone()]))
+    );
+    assert_eq!(
+        state
+            .partitions
+            .old_mapping
+            .get(&8)
+            .map(|partition| (&partition.master, &partition.replicas)),
+        Some((&other_worker, &vec![worker]))
+    );
 }
 
 #[tokio::test]
@@ -412,6 +374,7 @@ async fn stale_cluster_state_is_ignored() {
             (me.id.clone(), fresh_node(&me, now)),
             (leader.clone(), node("leader.local", 9001, now)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
     {
@@ -425,22 +388,21 @@ async fn stale_cluster_state_is_ignored() {
         service.state.as_mut().unwrap(),
         2,
         me.id.clone(),
-        vec![ClusterNode::Manager {
-            id: me.id.clone(),
-            host: me.host.clone(),
-            port: me.port,
-            last_heartbeat: now + 50,
-        }],
+        vec![cluster_node(
+            me.id.clone(),
+            &me.host,
+            me.port,
+            now + 50,
+            NodeType::Manager,
+        )],
+        Partitions::default(),
     );
 
     assert!(output.is_empty());
-    let state = service.state.as_mut().unwrap();
+    let state = service.state.as_ref().unwrap();
     assert_eq!(state.epoch, Some(3));
     assert_eq!(state.elected_leader_id, Some(leader));
-    assert_eq!(
-        *state.nodes.get_mut(&me.id).unwrap().last_heartbeat_mut(),
-        now
-    );
+    assert_eq!(state.nodes.get(&me.id).unwrap().last_heartbeat, now);
     let guard = config.read().await;
     assert_eq!(guard.replication_factor, Some(1));
 }
@@ -448,11 +410,12 @@ async fn stale_cluster_state_is_ignored() {
 #[tokio::test]
 async fn get_cluster_state_is_ignored_until_the_cluster_is_known() {
     let me = me("11111111-1111-1111-1111-111111111111");
-    let (mut service, config) = service(me.clone());
+    let (mut service, _config) = service(me.clone());
     service.state = Some(State {
         epoch: None,
         elected_leader_id: None,
         nodes: HashMap::from([(me.id.clone(), fresh_node(&me, now_millis()))]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -461,9 +424,7 @@ async fn get_cluster_state_is_ignored_until_the_cluster_is_known() {
         &mut output,
         service.state.as_mut().unwrap(),
         node_id("22222222-2222-2222-2222-222222222222"),
-        config.as_ref(),
-    )
-    .await;
+    );
 
     assert!(output.is_empty());
 }

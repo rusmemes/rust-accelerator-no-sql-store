@@ -1,5 +1,4 @@
-use crate::manager::grpc::api::v1::worker_event;
-use crate::manager::grpc::common::v1::Config;
+use crate::manager::grpc::api::v1::{worker_event, Config};
 use crate::{
     common::{Me, NodeId},
     manager::{
@@ -40,6 +39,7 @@ mod common {
     }
 }
 
+mod conversions;
 mod input;
 mod manager_connection;
 mod output;
@@ -112,7 +112,7 @@ impl ManagerApi for ManagerApiService {
                     Some(Payload::Connect(Connect {
                         id,
                         addr: Some(Addr { host, port }),
-                        config: Some(Config { replication_factor}),
+                        config: Some(Config { replication_factor }),
                     })),
             })) = input_stream.message().await
             {

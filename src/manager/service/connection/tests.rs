@@ -2,7 +2,7 @@ use super::*;
 use crate::common::now_millis;
 use crate::manager::domain::NodeProtocol;
 use crate::manager::service::test_support::*;
-use crate::manager::service::{Node, State};
+use crate::manager::service::State;
 use std::collections::HashMap;
 
 #[tokio::test]
@@ -14,6 +14,7 @@ async fn new_connection_adds_node_and_requests_cluster_state() {
         epoch: None,
         elected_leader_id: None,
         nodes: HashMap::from([(me.id.clone(), fresh_node(&me, now_millis()))]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -50,15 +51,9 @@ async fn new_connection_while_we_are_leader_does_not_request_cluster_state() {
         elected_leader_id: Some(me.id.clone()),
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now)),
-            (
-                peer.clone(),
-                Node::Manager {
-                    host: "peer.local".to_string(),
-                    port: 9001,
-                    last_heartbeat: now,
-                },
-            ),
+            (peer.clone(), node("peer.local", 9001, now)),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -86,15 +81,9 @@ async fn node_disconnected_for_unknown_node_is_a_noop() {
         elected_leader_id: Some(leader.clone()),
         nodes: HashMap::from([
             (me.id.clone(), fresh_node(&me, now_millis())),
-            (
-                leader.clone(),
-                Node::Manager {
-                    host: "leader.local".to_string(),
-                    port: 9001,
-                    last_heartbeat: now_millis(),
-                },
-            ),
+            (leader.clone(), node("leader.local", 9001, now_millis())),
         ]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -118,14 +107,8 @@ async fn node_disconnected_clears_current_leader() {
     service.state = Some(State {
         epoch: Some(7),
         elected_leader_id: Some(leader.clone()),
-        nodes: HashMap::from([(
-            leader.clone(),
-            Node::Manager {
-                host: "leader.local".to_string(),
-                port: 9001,
-                last_heartbeat: 0,
-            },
-        )]),
+        nodes: HashMap::from([(leader.clone(), node("leader.local", 9001, 0))]),
+        partitions: Default::default(),
         workers_with_calculated_partitions: Default::default(),
     });
 

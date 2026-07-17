@@ -1,4 +1,11 @@
 use crate::common::NodeId;
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeType {
+    Manager,
+    Worker,
+}
 
 #[derive(Debug)]
 pub enum NodeProtocol {
@@ -46,28 +53,24 @@ pub struct Heartbeat {
 }
 
 #[derive(Debug, Clone)]
-pub enum ClusterNode {
-    Manager {
-        id: NodeId,
-        host: String,
-        port: u32,
-        last_heartbeat: u64,
-    },
-    Worker {
-        id: NodeId,
-        host: String,
-        port: u32,
-        last_heartbeat: u64,
-        partitions: Partitions,
-    },
+pub struct ClusterNode {
+    pub id: NodeId,
+    pub host: String,
+    pub port: u32,
+    pub last_heartbeat: u64,
+    pub node_type: NodeType,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Partitions {
+    pub mapping: HashMap<u16, Partition>,
+    pub old_mapping: HashMap<u16, Partition>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Partitions {
-    pub masters: Vec<u16>,
-    pub old_masters: Vec<u16>,
-    pub replicas: Vec<u16>,
-    pub old_replicas: Vec<u16>,
+pub struct Partition {
+    pub master: NodeId,
+    pub replicas: Vec<NodeId>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,7 +78,7 @@ pub struct ClusterState {
     pub epoch: u64,
     pub leader_id: NodeId,
     pub items: Vec<ClusterNode>,
-    pub config: Option<Config>
+    pub partitions: Partitions,
 }
 
 #[derive(Debug, Clone)]

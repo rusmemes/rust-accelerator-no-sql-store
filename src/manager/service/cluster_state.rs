@@ -1,9 +1,9 @@
-use super::{Node, State};
-use crate::common::{Config, NodeId};
-use crate::manager::domain;
-use crate::manager::domain::{ClusterNode, ClusterState, NodeProtocol};
-use crate::manager::service::state::Partitions;
-use tokio::sync::RwLock;
+use super::{state, Node, State};
+use crate::common::NodeId;
+use crate::manager::domain::{
+    ClusterNode, ClusterState, NodeProtocol, NodeType, Partition, Partitions,
+};
+use std::collections::HashMap;
 
 pub(super) fn handle_cluster_state(
     output: &mut Vec<NodeProtocol>,
@@ -11,6 +11,7 @@ pub(super) fn handle_cluster_state(
     epoch: u64,
     leader_id: NodeId,
     items: Vec<ClusterNode>,
+    partitions: Partitions,
 ) {
     let accept: bool = if state.epoch.is_none() || state.epoch < Some(epoch) {
         state.epoch = Some(epoch);
@@ -23,15 +24,18 @@ pub(super) fn handle_cluster_state(
     };
 
     if accept {
+        state.partitions = domain_partitions_to_state(partitions);
+
         for item in items {
             match item {
-                ClusterNode::Manager {
+                ClusterNode {
                     id,
                     host,
                     port,
                     last_heartbeat,
+                    node_type,
                 } => {
-                    if let Some(Node::Manager {
+                    if let Some(Node {
                         last_heartbeat: node_last_heartbeat,
                         ..
                     }) = state.nodes.get_mut(&id)
@@ -40,60 +44,25 @@ pub(super) fn handle_cluster_state(
                             *node_last_heartbeat = last_heartbeat;
                         }
                     } else {
-                        output.push(NodeProtocol::NewConnection {
-                            id: None,
-                            host,
-                            port,
-                            manager: true,
-                        });
-                    }
-                }
-                ClusterNode::Worker {
-                    id,
-                    host,
-                    port,
-                    last_heartbeat,
-                    partitions: domain::Partitions {
-                        masters,
-                        replicas,
-                        old_masters,
-                        old_replicas,
-                    },
-                } => {
-                    if let Some(Node::Worker {
-                        last_heartbeat: node_last_heartbeat,
-                        partitions: Partitions {
-                            masters: master_partitions,
-                            replicas: replica_partitions,
-                            old_masters: old_master_partitions,
-                            old_replicas: old_replica_partitions,
-                        },
-                        ..
-                    }) = state.nodes.get_mut(&id)
-                    {
-                        if *node_last_heartbeat < last_heartbeat {
-                            *node_last_heartbeat = last_heartbeat;
-                        }
-
-                        *master_partitions = masters;
-                        *replica_partitions = replicas;
-                        *old_master_partitions = old_masters;
-                        *old_replica_partitions = old_replicas;
-                    } else {
-                        state.nodes.insert(
-                            id,
-                            Node::Worker {
+                        match node_type {
+                            NodeType::Manager => output.push(NodeProtocol::NewConnection {
+                                id: None,
                                 host,
                                 port,
-                                last_heartbeat,
-                                partitions: Partitions {
-                                    masters,
-                                    replicas,
-                                    old_masters,
-                                    old_replicas,
-                                },
-                            },
-                        );
+                                manager: true,
+                            }),
+                            NodeType::Worker => {
+                                state.nodes.insert(
+                                    id,
+                                    Node {
+                                        host,
+                                        port,
+                                        last_heartbeat,
+                                        node_type,
+                                    },
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -101,65 +70,86 @@ pub(super) fn handle_cluster_state(
     }
 }
 
-pub(super) async fn handle_get_cluster_state(
+pub(super) fn handle_get_cluster_state(
     output: &mut Vec<NodeProtocol>,
     state: &mut State,
     id: NodeId,
-    config: &RwLock<Config>,
 ) {
     if let Some((epoch, leader_id)) = state.epoch.zip(state.elected_leader_id.clone()) {
-        let guard = config.read().await;
-        let replication_factor = guard
-            .replication_factor
-            .expect("Partitions and replication factor must be set");
         output.push(NodeProtocol::ClusterState {
             recipient_id: id.clone(),
             state: ClusterState {
-                config: Some(crate::manager::domain::Config { replication_factor }),
                 epoch,
                 leader_id,
                 items: state
                     .nodes
                     .iter()
-                    .map(|(id, node)| match node {
-                        Node::Manager {
-                            host,
-                            port,
-                            last_heartbeat,
-                        } => ClusterNode::Manager {
-                            id: id.clone(),
-                            host: host.clone(),
-                            port: *port,
-                            last_heartbeat: *last_heartbeat,
-                        },
-                        Node::Worker {
-                            host,
-                            port,
-                            last_heartbeat,
-                            partitions:
-                                Partitions {
-                                    masters,
-                                    replicas,
-                                    old_masters,
-                                    old_replicas,
-                                },
-                        } => ClusterNode::Worker {
-                            id: id.clone(),
-                            host: host.clone(),
-                            port: *port,
-                            last_heartbeat: *last_heartbeat,
-                            partitions: domain::Partitions {
-                                masters: masters.clone(),
-                                replicas: replicas.clone(),
-                                old_masters: old_masters.clone(),
-                                old_replicas: old_replicas.clone(),
+                    .map(
+                        |(
+                            id,
+                            Node {
+                                host,
+                                port,
+                                last_heartbeat,
+                                node_type,
                             },
+                        )| ClusterNode {
+                            id: id.clone(),
+                            host: host.clone(),
+                            port: *port,
+                            last_heartbeat: *last_heartbeat,
+                            node_type: *node_type,
                         },
-                    })
+                    )
                     .collect(),
+                partitions: Partitions {
+                    mapping: state_partition_mapping_to_domain(&state.partitions.mapping),
+                    old_mapping: state_partition_mapping_to_domain(&state.partitions.old_mapping),
+                },
             },
         });
     }
+}
+
+fn domain_partitions_to_state(partitions: Partitions) -> state::Partitions {
+    state::Partitions {
+        mapping: domain_partition_mapping_to_state(partitions.mapping),
+        old_mapping: domain_partition_mapping_to_state(partitions.old_mapping),
+    }
+}
+
+fn domain_partition_mapping_to_state(
+    mapping: HashMap<u16, Partition>,
+) -> HashMap<u16, state::Partition> {
+    mapping
+        .into_iter()
+        .map(|(partition_id, partition)| {
+            (
+                partition_id,
+                state::Partition {
+                    master: partition.master,
+                    replicas: partition.replicas,
+                },
+            )
+        })
+        .collect()
+}
+
+fn state_partition_mapping_to_domain(
+    mapping: &HashMap<u16, state::Partition>,
+) -> HashMap<u16, Partition> {
+    mapping
+        .iter()
+        .map(|(partition_id, partition)| {
+            (
+                *partition_id,
+                Partition {
+                    master: partition.master.clone(),
+                    replicas: partition.replicas.clone(),
+                },
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

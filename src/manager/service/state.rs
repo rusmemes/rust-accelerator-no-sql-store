@@ -1,43 +1,34 @@
 use crate::common::NodeId;
+use crate::manager::domain::NodeType;
 use std::collections::{BTreeSet, HashMap};
 
 #[derive(Debug)]
-pub(super) enum Node {
-    Manager {
-        host: String,
-        port: u32,
-        last_heartbeat: u64,
-    },
-    Worker {
-        host: String,
-        port: u32,
-        last_heartbeat: u64,
-        partitions: Partitions,
-    },
+pub(super) struct Node {
+    pub host: String,
+    pub port: u32,
+    pub last_heartbeat: u64,
+    pub node_type: NodeType,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct Partitions {
+    pub mapping: HashMap<u16, Partition>,
+    pub old_mapping: HashMap<u16, Partition>,
 }
 
 #[derive(Debug)]
-pub(super) struct Partitions {
-    pub masters: Vec<u16>,
-    pub old_masters: Vec<u16>,
-    pub replicas: Vec<u16>,
-    pub old_replicas: Vec<u16>,
+pub(super) struct Partition {
+    pub master: NodeId,
+    pub replicas: Vec<NodeId>,
 }
 
 impl Node {
     pub(super) fn is_manager(&self) -> bool {
-        matches!(self, Node::Manager { .. })
+        matches!(self.node_type, NodeType::Manager)
     }
 
     pub(super) fn is_worker(&self) -> bool {
-        matches!(self, Node::Worker { .. })
-    }
-
-    pub(super) fn last_heartbeat_mut(&mut self) -> &mut u64 {
-        match self {
-            Node::Manager { last_heartbeat, .. } => last_heartbeat,
-            Node::Worker { last_heartbeat, .. } => last_heartbeat,
-        }
+        matches!(self.node_type, NodeType::Worker)
     }
 }
 
@@ -46,5 +37,6 @@ pub(super) struct State {
     pub(super) epoch: Option<u64>,
     pub(super) elected_leader_id: Option<NodeId>,
     pub(super) nodes: HashMap<NodeId, Node>,
+    pub(super) partitions: Partitions,
     pub(super) workers_with_calculated_partitions: BTreeSet<NodeId>,
 }

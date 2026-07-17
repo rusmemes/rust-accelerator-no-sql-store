@@ -1,6 +1,6 @@
-use super::{state, Node, State};
+use super::{Node, State};
 use crate::common::{now_millis, Me, NodeId};
-use crate::manager::domain::NodeProtocol;
+use crate::manager::domain::{NodeProtocol, NodeType};
 
 pub(super) fn handle_node_disconnected(state: &mut State, id: NodeId, me: &Me) {
     if let Some(_) = state.nodes.remove(&id) {
@@ -32,22 +32,18 @@ pub(super) fn handle_new_connection(
                 {
                     output.push(NodeProtocol::GetClusterState { id });
                 }
-                Node::Manager {
+                Node {
                     host,
                     port,
                     last_heartbeat: now_millis(),
+                    node_type: NodeType::Manager,
                 }
             } else {
-                Node::Worker {
+                Node {
                     host,
                     port,
                     last_heartbeat: now_millis(),
-                    partitions: state::Partitions {
-                        masters: vec![],
-                        replicas: vec![],
-                        old_masters: vec![],
-                        old_replicas: vec![],
-                    },
+                    node_type: NodeType::Worker,
                 }
             },
         );

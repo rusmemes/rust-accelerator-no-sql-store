@@ -5,7 +5,8 @@ use crate::manager::grpc::api::v1::worker_event;
 use crate::manager::grpc::api::v1::{
     Heartbeat, Leader, ManagerEvent, VoteRequest, VoteResponse, WorkerEvent,
 };
-use crate::manager::grpc::common::v1::{node, Addr, ClusterState, Config, GetState, Manager, Node, Partitions, Worker};
+use crate::manager::grpc::common::v1::{Addr, ClusterState, GetState, Node};
+use crate::manager::grpc::conversions::{domain_node_type_to_grpc, domain_partitions_to_grpc};
 use crate::manager::grpc::session::{handle_common, ManagerIOStream, WorkerIOStream};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -35,9 +36,11 @@ pub(super) async fn output(
                 port,
                 manager,
             } => {
-                let guard = config.read().await;
-                let replication_factor = guard.replication_factor.expect("Partitions and replication factor should be defined");
-                drop(guard);
+                let replication_factor = config
+                    .read()
+                    .await
+                    .replication_factor
+                    .expect("Partitions and replication factor should be defined");
                 if manager {
                     super::new_manager_connection(
                         &me,
@@ -62,7 +65,7 @@ pub(super) async fn output(
                         epoch,
                         leader_id,
                         items,
-                        config,
+                        partitions,
                     },
             } => {
                 handle_output_cluster_state(
@@ -73,7 +76,7 @@ pub(super) async fn output(
                     epoch,
                     leader_id,
                     items,
-                    config,
+                    partitions,
                 )
                 .await;
             }
@@ -184,55 +187,29 @@ pub(super) async fn handle_output_cluster_state(
     epoch: u64,
     leader_id: NodeId,
     items: Vec<ClusterNode>,
-    config: Option<domain::Config>,
+    partitions: domain::Partitions,
 ) {
     let state = || ClusterState {
         epoch,
         leader_id: leader_id.to_string(),
         nodes: items
             .into_iter()
-            .map(|node| match node {
-                ClusterNode::Manager {
-                    id,
-                    host,
-                    port,
+            .map(
+                |ClusterNode {
+                     id,
+                     host,
+                     port,
+                     last_heartbeat,
+                     node_type,
+                 }| Node {
+                    id: id.to_string(),
+                    addr: Some(Addr { host, port }),
                     last_heartbeat,
-                } => Node {
-                    payload: Some(node::Payload::Manager(Manager {
-                        id: id.to_string(),
-                        addr: Some(Addr { host, port }),
-                        last_heartbeat,
-                    })),
+                    node_type: domain_node_type_to_grpc(node_type),
                 },
-                ClusterNode::Worker {
-                    id,
-                    host,
-                    port,
-                    last_heartbeat,
-                    partitions: domain::Partitions {
-                        masters,
-                        replicas,
-                        old_masters,
-                        old_replicas,
-                    },
-                } => Node {
-                    payload: Some(node::Payload::Worker(Worker {
-                        id: id.to_string(),
-                        addr: Some(Addr { host, port }),
-                        last_heartbeat,
-                        partitions: Some(Partitions {
-                            masters: masters.into_iter().map(|p| p as u32).collect(),
-                            replicas: replicas.into_iter().map(|p| p as u32).collect(),
-                            old_masters: old_masters.into_iter().map(|p| p as u32).collect(),
-                            old_replicas: old_replicas.into_iter().map(|p| p as u32).collect(),
-                        }),
-                    })),
-                },
-            })
+            )
             .collect(),
-        config: config.map(|config| Config {
-            replication_factor: config.replication_factor as u32,
-        }),
+        partitions: Some(domain_partitions_to_grpc(partitions)),
     };
 
     let is_worker = worker_sessions.read().await.contains_key(&id);

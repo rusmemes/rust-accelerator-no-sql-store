@@ -1,6 +1,6 @@
-use super::{ManagerService, Node, State};
+use super::{ManagerService, Node};
 use crate::common::{Config, Me, NodeId};
-use crate::manager::service::state::Partitions;
+use crate::manager::domain::NodeType;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -33,73 +33,28 @@ pub(super) fn service(me: Arc<Me>) -> (ManagerService, Arc<RwLock<Config>>) {
 }
 
 pub(super) fn fresh_node(me: &Me, last_heartbeat: u64) -> Node {
-    Node::Manager {
+    Node {
         host: me.host.clone(),
         port: me.port,
         last_heartbeat,
+        node_type: NodeType::Manager,
     }
 }
 
 pub(super) fn node(host: &str, port: u32, last_heartbeat: u64) -> Node {
-    Node::Manager {
+    Node {
         host: host.to_string(),
         port,
         last_heartbeat,
+        node_type: NodeType::Manager,
     }
 }
 
-pub(super) fn worker_node(host: &str, port: u32, last_heartbeat: u64, masters: Vec<u16>) -> Node {
-    Node::Worker {
+pub(super) fn worker_node(host: &str, port: u32, last_heartbeat: u64) -> Node {
+    Node {
         host: host.to_string(),
         port,
         last_heartbeat,
-        partitions: Partitions {
-            masters,
-            old_masters: vec![],
-            replicas: vec![],
-            old_replicas: vec![],
-        },
-    }
-}
-
-pub(super) fn worker_node_with_partitions(
-    host: &str,
-    port: u32,
-    last_heartbeat: u64,
-    partitions: Partitions,
-) -> Node {
-    Node::Worker {
-        host: host.to_string(),
-        port,
-        last_heartbeat,
-        partitions,
-    }
-}
-
-pub(super) fn masters_for_worker(state: &State, id: &NodeId) -> Vec<u16> {
-    match state.nodes.get(id).expect("worker exists") {
-        Node::Worker { partitions, .. } => partitions.masters.clone(),
-        _ => panic!("unexpected node type"),
-    }
-}
-
-pub(super) fn replicas_for_worker(state: &State, id: &NodeId) -> Vec<u16> {
-    match state.nodes.get(id).expect("worker exists") {
-        Node::Worker { partitions, .. } => partitions.replicas.clone(),
-        _ => panic!("unexpected node type"),
-    }
-}
-
-pub(super) fn old_masters_for_worker(state: &State, id: &NodeId) -> Vec<u16> {
-    match state.nodes.get(id).expect("worker exists") {
-        Node::Worker { partitions, .. } => partitions.old_masters.clone(),
-        _ => panic!("unexpected node type"),
-    }
-}
-
-pub(super) fn old_replicas_for_worker(state: &State, id: &NodeId) -> Vec<u16> {
-    match state.nodes.get(id).expect("worker exists") {
-        Node::Worker { partitions, .. } => partitions.old_replicas.clone(),
-        _ => panic!("unexpected node type"),
+        node_type: NodeType::Worker,
     }
 }

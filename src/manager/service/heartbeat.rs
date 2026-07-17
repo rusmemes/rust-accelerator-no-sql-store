@@ -1,11 +1,16 @@
 use super::{get_random_number, Node, State};
 use crate::common::{now_millis, Me, NodeId};
-use crate::manager::domain::{Heartbeat, NodeProtocol};
+use crate::manager::domain::{Heartbeat, NodeProtocol, NodeType};
 
 const HEARTBEAT_INTERVAL_MS: u64 = 200;
 
 pub(super) fn heartbeats(state: &mut State, output: &mut Vec<NodeProtocol>, me: &Me) {
-    if let Some(Node::Manager { last_heartbeat, .. }) = state.nodes.get_mut(&me.id) {
+    if let Some(Node {
+        node_type: NodeType::Manager,
+        last_heartbeat,
+        ..
+    }) = state.nodes.get_mut(&me.id)
+    {
         let now = now_millis();
         if *last_heartbeat + HEARTBEAT_INTERVAL_MS <= now {
             *last_heartbeat = now;
@@ -25,7 +30,11 @@ pub(super) fn heartbeats(state: &mut State, output: &mut Vec<NodeProtocol>, me: 
         }
 
         if state.elected_leader_id.is_some() && state.elected_leader_id.as_ref() != Some(&me.id) {
-            if let Some(Node::Manager { last_heartbeat, .. }) = state
+            if let Some(Node {
+                node_type: NodeType::Manager,
+                last_heartbeat,
+                ..
+            }) = state
                 .nodes
                 .get_mut(&state.elected_leader_id.as_ref().unwrap())
             {
@@ -55,7 +64,7 @@ pub(super) fn handle_heartbeat(
             );
         }
         Some(node) => {
-            *node.last_heartbeat_mut() = ts;
+            node.last_heartbeat = ts;
             if state.elected_leader_id.as_ref() == Some(&me.id) {
                 output.extend(
                     state

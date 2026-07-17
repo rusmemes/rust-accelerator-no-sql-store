@@ -5,7 +5,8 @@ use crate::manager::grpc::api::v1::worker_event;
 use crate::manager::grpc::api::v1::{
     Connect, Heartbeat, Leader, ManagerEvent, VoteRequest, VoteResponse, WorkerEvent,
 };
-use crate::manager::grpc::common::v1::{node, Addr, ClusterState, Manager, Partitions, Worker};
+use crate::manager::grpc::common::v1::{Addr, ClusterState, Node};
+use crate::manager::grpc::conversions::{grpc_node_type_to_domain, grpc_partitions_to_domain};
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
@@ -137,70 +138,48 @@ pub(super) async fn input_from_manager(
                     epoch,
                     leader_id,
                     nodes,
+                    partitions,
                     ..
                 }) => {
-                    if let Err(e) = tx
-                        .send(NodeProtocol::ClusterState {
-                            recipient_id: me.id.clone(),
-                            state: domain::ClusterState {
-                                config: None,
-                                epoch,
-                                leader_id: leader_id.into(),
-                                items: nodes
-                                    .into_iter()
-                                    .filter_map(|grpc| match grpc.payload {
-                                        Some(node::Payload::Manager(Manager {
-                                            id,
-                                            addr: Some(Addr { host, port }),
-                                            last_heartbeat,
-                                        })) => Some(ClusterNode::Manager {
-                                            id: id.into(),
-                                            host,
-                                            port,
-                                            last_heartbeat,
-                                        }),
-                                        Some(node::Payload::Worker(Worker {
-                                            id,
-                                            addr: Some(Addr { host, port }),
-                                            last_heartbeat,
-                                            partitions: Some(Partitions {
-                                                masters,
-                                                replicas,
-                                                old_masters,
-                                                old_replicas,
-                                            }),
-                                        })) => Some(ClusterNode::Worker {
-                                            id: id.into(),
-                                            host,
-                                            port,
-                                            last_heartbeat,
-                                            partitions: domain::Partitions {
-                                                masters: masters
-                                                    .into_iter()
-                                                    .map(|p| p as u16)
-                                                    .collect(),
-                                                replicas: replicas
-                                                    .into_iter()
-                                                    .map(|p| p as u16)
-                                                    .collect(),
-                                                old_masters: old_masters
-                                                    .into_iter()
-                                                    .map(|p| p as u16)
-                                                    .collect(),
-                                                old_replicas: old_replicas
-                                                    .into_iter()
-                                                    .map(|p| p as u16)
-                                                    .collect(),
-                                            },
-                                        }),
-                                        _ => None,
-                                    })
-                                    .collect(),
-                            },
-                        })
-                        .await
-                    {
-                        tracing::error!("Error processing ClusterState response: {}", e);
+                    if let Some(partitions) = partitions {
+                        if let Err(e) = tx
+                            .send(NodeProtocol::ClusterState {
+                                recipient_id: me.id.clone(),
+                                state: domain::ClusterState {
+                                    epoch,
+                                    leader_id: leader_id.into(),
+                                    partitions: grpc_partitions_to_domain(partitions),
+                                    items: nodes
+                                        .into_iter()
+                                        .filter_map(|node| {
+                                            if let Node {
+                                                id,
+                                                addr: Some(Addr { host, port }),
+                                                last_heartbeat,
+                                                node_type,
+                                            } = node
+                                            {
+                                                Some(ClusterNode {
+                                                    id: id.into(),
+                                                    host,
+                                                    port,
+                                                    last_heartbeat,
+                                                    node_type: grpc_node_type_to_domain(node_type),
+                                                })
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect(),
+                                },
+                            })
+                            .await
+                        {
+                            tracing::error!("Error processing ClusterState response: {}", e);
+                            break;
+                        }
+                    } else {
+                        tracing::error!("Received ClusterState response with no partitions");
                         break;
                     }
                 }
