@@ -141,45 +141,40 @@ pub(super) async fn input_from_manager(
                     partitions,
                     ..
                 }) => {
-                    if let Some(partitions) = partitions {
-                        if let Err(e) = tx
-                            .send(NodeProtocol::ClusterState {
-                                recipient_id: me.id.clone(),
-                                state: domain::ClusterState {
-                                    epoch,
-                                    leader_id: leader_id.into(),
-                                    partitions: grpc_partitions_to_domain(partitions),
-                                    items: nodes
-                                        .into_iter()
-                                        .filter_map(|node| {
-                                            if let Node {
-                                                id,
-                                                addr: Some(Addr { host, port }),
+                    if let Err(e) = tx
+                        .send(NodeProtocol::ClusterState {
+                            recipient_id: me.id.clone(),
+                            state: domain::ClusterState {
+                                epoch,
+                                leader_id: leader_id.into(),
+                                partitions: grpc_partitions_to_domain(partitions),
+                                items: nodes
+                                    .into_iter()
+                                    .filter_map(|node| {
+                                        if let Node {
+                                            id,
+                                            addr: Some(Addr { host, port }),
+                                            last_heartbeat,
+                                            node_type,
+                                        } = node
+                                        {
+                                            Some(ClusterNode {
+                                                id: id.into(),
+                                                host,
+                                                port,
                                                 last_heartbeat,
-                                                node_type,
-                                            } = node
-                                            {
-                                                Some(ClusterNode {
-                                                    id: id.into(),
-                                                    host,
-                                                    port,
-                                                    last_heartbeat,
-                                                    node_type: grpc_node_type_to_domain(node_type),
-                                                })
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .collect(),
-                                },
-                            })
-                            .await
-                        {
-                            tracing::error!("Error processing ClusterState response: {}", e);
-                            break;
-                        }
-                    } else {
-                        tracing::error!("Received ClusterState response with no partitions");
+                                                node_type: grpc_node_type_to_domain(node_type),
+                                            })
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect(),
+                            },
+                        })
+                        .await
+                    {
+                        tracing::error!("Error processing ClusterState response: {}", e);
                         break;
                     }
                 }

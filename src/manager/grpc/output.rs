@@ -1,5 +1,5 @@
 use crate::common::{Me, NodeId};
-use crate::manager::domain::{self, ClusterNode, NodeProtocol};
+use crate::manager::domain::{self, ClusterNode, NodeProtocol, Partition};
 use crate::manager::grpc::api::v1::manager_event::Payload;
 use crate::manager::grpc::api::v1::worker_event;
 use crate::manager::grpc::api::v1::{
@@ -189,7 +189,7 @@ pub(super) async fn handle_output_cluster_state(
     epoch: u64,
     leader_id: NodeId,
     items: Vec<ClusterNode>,
-    partitions: domain::Partitions,
+    partitions: HashMap<u16, Partition>,
 ) {
     let state = || ClusterState {
         epoch,
@@ -211,7 +211,7 @@ pub(super) async fn handle_output_cluster_state(
                 },
             )
             .collect(),
-        partitions: Some(domain_partitions_to_grpc(partitions)),
+        partitions: domain_partitions_to_grpc(partitions),
     };
 
     let is_worker = worker_sessions.read().await.contains_key(&id);

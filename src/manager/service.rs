@@ -28,7 +28,6 @@ mod heartbeat;
 mod partitions;
 mod state;
 
-use crate::manager::service::state::Partitions;
 use state::{Node, State};
 
 // to make nodes trying to start elections at different times, we randomize the election timeout interval
@@ -146,7 +145,7 @@ impl ManagerService {
                 epoch: None,
                 elected_leader_id: None,
                 nodes,
-                partitions: Partitions::default(),
+                partitions: Default::default(),
                 workers_with_calculated_partitions: Default::default(),
             });
             vec![NodeProtocol::NewConnection {
@@ -170,7 +169,7 @@ impl ManagerService {
                 epoch: Some(0),
                 elected_leader_id: None,
                 nodes,
-                partitions: Partitions::default(),
+                partitions: Default::default(),
                 workers_with_calculated_partitions: Default::default(),
             });
             vec![]

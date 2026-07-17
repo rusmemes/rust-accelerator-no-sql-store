@@ -61,12 +61,6 @@ pub struct ClusterNode {
     pub node_type: NodeType,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct Partitions {
-    pub mapping: HashMap<u16, Partition>,
-    pub old_replicas: HashMap<u16, HashSet<NodeId>>,
-}
-
 #[derive(Debug, Clone)]
 pub struct Partition {
     pub master: NodeId,
@@ -78,5 +72,5 @@ pub struct ClusterState {
     pub epoch: u64,
     pub leader_id: NodeId,
     pub items: Vec<ClusterNode>,
-    pub partitions: Partitions,
+    pub partitions: HashMap<u16, Partition>,
 }

@@ -1,8 +1,6 @@
 use super::{state, Node, State};
 use crate::common::NodeId;
-use crate::manager::domain::{
-    ClusterNode, ClusterState, NodeProtocol, NodeType, Partition, Partitions,
-};
+use crate::manager::domain::{ClusterNode, ClusterState, NodeProtocol, NodeType, Partition};
 use std::collections::HashMap;
 
 pub(super) fn handle_cluster_state(
@@ -11,7 +9,7 @@ pub(super) fn handle_cluster_state(
     epoch: u64,
     leader_id: NodeId,
     items: Vec<ClusterNode>,
-    partitions: Partitions,
+    partitions: HashMap<u16, Partition>,
 ) {
     let accept: bool = if state.epoch.is_none() || state.epoch < Some(epoch) {
         state.epoch = Some(epoch);
@@ -24,7 +22,7 @@ pub(super) fn handle_cluster_state(
     };
 
     if accept {
-        state.partitions = domain_partitions_to_state(partitions);
+        state.partitions = domain_partition_mapping_to_state(partitions);
 
         for item in items {
             match item {
@@ -102,19 +100,9 @@ pub(super) fn handle_get_cluster_state(
                         },
                     )
                     .collect(),
-                partitions: Partitions {
-                    mapping: state_partition_mapping_to_domain(&state.partitions.mapping),
-                    old_replicas: state.partitions.old_replicas.clone(),
-                },
+                partitions: state_partition_mapping_to_domain(&state.partitions),
             },
         });
-    }
-}
-
-fn domain_partitions_to_state(partitions: Partitions) -> state::Partitions {
-    state::Partitions {
-        mapping: domain_partition_mapping_to_state(partitions.mapping),
-        old_replicas: partitions.old_replicas,
     }
 }
 

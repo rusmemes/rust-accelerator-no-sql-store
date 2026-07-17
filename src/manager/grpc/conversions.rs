@@ -1,5 +1,6 @@
 use crate::manager::domain;
 use crate::manager::grpc::common::v1;
+use crate::manager::grpc::common::v1::Partition;
 use std::collections::HashMap;
 
 pub(super) fn grpc_node_type_to_domain(node_type: i32) -> domain::NodeType {
@@ -16,22 +17,20 @@ pub(super) fn domain_node_type_to_grpc(node_type: domain::NodeType) -> i32 {
     }
 }
 
-pub(super) fn grpc_partitions_to_domain(partitions: v1::Partitions) -> domain::Partitions {
-    domain::Partitions {
-        mapping: grpc_partition_mapping_to_domain(partitions.mapping),
-        old_replicas: grpc_old_replicas_to_domain(partitions.old_replicas),
-    }
+pub(super) fn grpc_partitions_to_domain(
+    partitions: HashMap<u32, Partition>,
+) -> HashMap<u16, domain::Partition> {
+    grpc_partition_mapping_to_domain(partitions)
 }
 
-pub(super) fn domain_partitions_to_grpc(partitions: domain::Partitions) -> v1::Partitions {
-    v1::Partitions {
-        mapping: domain_partition_mapping_to_grpc(partitions.mapping),
-        old_replicas: domain_old_replicas_to_grpc(partitions.old_replicas),
-    }
+pub(super) fn domain_partitions_to_grpc(
+    partitions: HashMap<u16, domain::Partition>,
+) -> HashMap<u32, Partition> {
+    domain_partition_mapping_to_grpc(partitions)
 }
 
 fn grpc_partition_mapping_to_domain(
-    mapping: HashMap<u32, v1::Partition>,
+    mapping: HashMap<u32, Partition>,
 ) -> HashMap<u16, domain::Partition> {
     mapping
         .into_iter()
@@ -53,53 +52,19 @@ fn grpc_partition_mapping_to_domain(
 
 fn domain_partition_mapping_to_grpc(
     mapping: HashMap<u16, domain::Partition>,
-) -> HashMap<u32, v1::Partition> {
+) -> HashMap<u32, Partition> {
     mapping
         .into_iter()
         .map(|(partition_id, partition)| {
             (
                 partition_id as u32,
-                v1::Partition {
+                Partition {
                     master: partition.master.to_string(),
                     replicas: partition
                         .replicas
                         .into_iter()
                         .map(|node| node.to_string())
                         .collect(),
-                },
-            )
-        })
-        .collect()
-}
-
-fn grpc_old_replicas_to_domain(
-    mapping: HashMap<u32, v1::OldReplicas>,
-) -> HashMap<u16, std::collections::HashSet<crate::common::NodeId>> {
-    mapping
-        .into_iter()
-        .map(|(partition_id, old_replicas)| {
-            (
-                partition_id as u16,
-                old_replicas
-                    .replicas
-                    .into_iter()
-                    .map(|replica| replica.into())
-                    .collect(),
-            )
-        })
-        .collect()
-}
-
-fn domain_old_replicas_to_grpc(
-    mapping: HashMap<u16, std::collections::HashSet<crate::common::NodeId>>,
-) -> HashMap<u32, v1::OldReplicas> {
-    mapping
-        .into_iter()
-        .map(|(partition_id, replicas)| {
-            (
-                partition_id as u32,
-                v1::OldReplicas {
-                    replicas: replicas.into_iter().map(|node| node.to_string()).collect(),
                 },
             )
         })

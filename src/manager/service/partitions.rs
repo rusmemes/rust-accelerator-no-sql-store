@@ -1,7 +1,7 @@
 use super::State;
 use crate::common::{Me, NodeId};
 use crate::manager::domain;
-use crate::manager::domain::{ClusterState, NodeProtocol, Partitions};
+use crate::manager::domain::{ClusterState, NodeProtocol};
 use crate::manager::service::state::Partition;
 use std::collections::{BTreeSet, HashSet};
 
@@ -33,8 +33,7 @@ pub(super) fn worker_partitions(
                 .map(|it| it.clone())
                 .collect::<Vec<_>>();
 
-            move_current_mapping_to_old(state, &vec);
-
+            state.partitions.clear();
             if !vec.is_empty() {
                 calculate_new_mapping(state, PARTITIONS_AMOUNT, replication_factor, &vec);
 
@@ -65,42 +64,20 @@ fn create_new_workers_state(state: &mut State) -> ClusterState {
             .clone()
             .expect("existing checked above"),
         items: vec![],
-        partitions: Partitions {
-            mapping: state
-                .partitions
-                .mapping
-                .iter()
-                .map(|(id, partition)| {
-                    (
-                        *id,
-                        domain::Partition {
-                            master: partition.master.clone(),
-                            replicas: partition.replicas.clone(),
-                        },
-                    )
-                })
-                .collect(),
-            old_replicas: state.partitions.old_replicas.clone(),
-        },
+        partitions: state
+            .partitions
+            .iter()
+            .map(|(id, partition)| {
+                (
+                    *id,
+                    domain::Partition {
+                        master: partition.master.clone(),
+                        replicas: partition.replicas.clone(),
+                    },
+                )
+            })
+            .collect(),
     }
-}
-
-fn move_current_mapping_to_old(state: &mut State, current_keys: &[NodeId]) {
-    for (partition_id, partition) in state.partitions.mapping.drain() {
-        if let Some(old_replicas) = state.partitions.old_replicas.get_mut(&partition_id) {
-            old_replicas.extend(partition.replicas);
-            old_replicas.insert(partition.master.clone());
-        } else {
-            let mut replicas = partition.replicas;
-            replicas.insert(partition.master);
-            state.partitions.old_replicas.insert(partition_id, replicas);
-        }
-    }
-
-    state.partitions.old_replicas.retain(|_, old_replicas| {
-        old_replicas.retain(|node_id| current_keys.contains(node_id));
-        !old_replicas.is_empty()
-    });
 }
 
 fn calculate_new_mapping(
@@ -109,7 +86,7 @@ fn calculate_new_mapping(
     replication_factor: usize,
     vec: &Vec<NodeId>,
 ) {
-    let mapping = &mut state.partitions.mapping;
+    let mapping = &mut state.partitions;
     for partition in 0..partitions_amount {
         let master_partition_index = partition % vec.len();
         for replica in 0..replication_factor {

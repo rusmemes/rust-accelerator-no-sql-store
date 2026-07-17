@@ -1,12 +1,12 @@
 use super::*;
 use crate::common::now_millis;
-use crate::manager::domain::{ClusterNode, NodeProtocol, NodeType, Partition, Partitions};
+use crate::manager::domain::{ClusterNode, NodeProtocol, NodeType, Partition};
 use crate::manager::service::test_support::*;
 use crate::manager::service::State;
 use std::collections::{HashMap, HashSet};
 
 fn cluster_node(
-    id: crate::common::NodeId,
+    id: NodeId,
     host: &str,
     port: u32,
     last_heartbeat: u64,
@@ -21,7 +21,7 @@ fn cluster_node(
     }
 }
 
-fn replicas(replicas: Vec<crate::common::NodeId>) -> HashSet<crate::common::NodeId> {
+fn replicas(replicas: Vec<NodeId>) -> HashSet<NodeId> {
     replicas.into_iter().collect()
 }
 
@@ -68,8 +68,7 @@ async fn get_cluster_state_returns_current_cluster_snapshot() {
     assert_eq!(cluster_state.epoch, 3);
     assert_eq!(cluster_state.leader_id, me.id);
     assert_eq!(cluster_state.items.len(), 2);
-    assert!(cluster_state.partitions.mapping.is_empty());
-    assert!(cluster_state.partitions.old_replicas.is_empty());
+    assert!(cluster_state.partitions.is_empty());
 }
 
 #[tokio::test]
@@ -88,16 +87,13 @@ async fn get_cluster_state_returns_worker_items_and_partition_mapping() {
                 worker_node("worker.local", 9100, now - 5),
             ),
         ]),
-        partitions: crate::manager::service::state::Partitions {
-            mapping: HashMap::from([(
-                7,
-                crate::manager::service::state::Partition {
-                    master: worker_id.clone(),
-                    replicas: replicas(vec![me.id.clone()]),
-                },
-            )]),
-            old_replicas: Default::default(),
-        },
+        partitions: HashMap::from([(
+            7,
+            state::Partition {
+                master: worker_id.clone(),
+                replicas: replicas(vec![me.id.clone()]),
+            },
+        )]),
         workers_with_calculated_partitions: Default::default(),
     });
 
@@ -131,7 +127,6 @@ async fn get_cluster_state_returns_worker_items_and_partition_mapping() {
     assert_eq!(
         cluster_state
             .partitions
-            .mapping
             .get(&7)
             .map(|partition| (&partition.master, &partition.replicas)),
         Some((&worker_id, &replicas(vec![me.id.clone()])))
@@ -172,7 +167,7 @@ async fn cluster_state_updates_known_nodes_and_requests_unknown_managers() {
                 NodeType::Manager,
             ),
         ],
-        Partitions::default(),
+        HashMap::new(),
     );
 
     assert!(matches!(
@@ -216,7 +211,7 @@ async fn cluster_state_accepts_new_epoch_same_leader_and_rejects_conflicts() {
             cluster_node(me.id.clone(), &me.host, me.port, now, NodeType::Manager),
             cluster_node(leader.clone(), "leader.local", 9001, now, NodeType::Manager),
         ],
-        Partitions::default(),
+        HashMap::new(),
     );
     assert!(first.is_empty());
     assert_eq!(service.state.as_ref().unwrap().epoch, Some(4));
@@ -234,7 +229,7 @@ async fn cluster_state_accepts_new_epoch_same_leader_and_rejects_conflicts() {
             now + 1,
             NodeType::Manager,
         )],
-        Partitions::default(),
+        HashMap::new(),
     );
     assert!(same_epoch_same_leader.is_empty());
     assert_eq!(
@@ -262,7 +257,7 @@ async fn cluster_state_accepts_new_epoch_same_leader_and_rejects_conflicts() {
             now + 2,
             NodeType::Manager,
         )],
-        Partitions::default(),
+        HashMap::new(),
     );
     assert!(conflict.is_empty());
     assert_eq!(service.state.as_ref().unwrap().epoch, Some(4));
@@ -319,19 +314,13 @@ async fn cluster_state_applies_partition_mapping_and_adds_unknown_workers() {
                 NodeType::Worker,
             ),
         ],
-        Partitions {
-            mapping: HashMap::from([(
-                9,
-                Partition {
-                    master: worker.clone(),
-                    replicas: replicas(vec![other_worker.clone()]),
-                },
-            )]),
-            old_replicas: HashMap::from([(
-                8,
-                replicas(vec![worker.clone(), other_worker.clone()]),
-            )]),
-        },
+        HashMap::from([(
+            9,
+            Partition {
+                master: worker.clone(),
+                replicas: replicas(vec![other_worker.clone()]),
+            },
+        )]),
     );
 
     assert!(output.is_empty());
@@ -347,14 +336,9 @@ async fn cluster_state_applies_partition_mapping_and_adds_unknown_workers() {
     assert_eq!(
         state
             .partitions
-            .mapping
             .get(&9)
             .map(|partition| (&partition.master, &partition.replicas)),
         Some((&worker, &replicas(vec![other_worker.clone()])))
-    );
-    assert_eq!(
-        state.partitions.old_replicas.get(&8),
-        Some(&replicas(vec![worker, other_worker]))
     );
 }
 
@@ -392,7 +376,7 @@ async fn stale_cluster_state_is_ignored() {
             now + 50,
             NodeType::Manager,
         )],
-        Partitions::default(),
+        HashMap::new(),
     );
 
     assert!(output.is_empty());

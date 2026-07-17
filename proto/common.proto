@@ -14,18 +14,9 @@ enum NodeType {
   Worker = 1;
 }
 
-message Partitions {
-  map<uint32, Partition> mapping = 1;
-  map<uint32, OldReplicas> old_replicas = 2;
-}
-
 message Partition {
   string master = 1;
   repeated string replicas = 2;
-}
-
-message OldReplicas {
-  repeated string replicas = 1;
 }
 
 message Node {
@@ -39,5 +30,5 @@ message ClusterState {
   uint64 epoch = 1;
   string leader_id = 2;
   repeated Node nodes = 3;
-  Partitions partitions = 4;
+  map<uint32, Partition> partitions = 4;
 }

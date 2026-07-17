@@ -97,19 +97,13 @@ async fn output_routes_cluster_state_to_worker_session_includes_partitions() {
                 node_type: domain::NodeType::Worker,
             },
         ],
-        domain::Partitions {
-            mapping: HashMap::from([(
-                7,
-                domain::Partition {
-                    master: worker_node_id.clone(),
-                    replicas: HashSet::from([manager_node_id.clone()]),
-                },
-            )]),
-            old_replicas: HashMap::from([(
-                6,
-                HashSet::from([manager_node_id.clone(), worker_node_id.clone()]),
-            )]),
-        },
+        HashMap::from([(
+            7,
+            Partition {
+                master: worker_node_id.clone(),
+                replicas: HashSet::from([manager_node_id.clone()]),
+            },
+        )]),
     )
     .await;
 
@@ -140,21 +134,11 @@ async fn output_routes_cluster_state_to_worker_session_includes_partitions() {
             && node.last_heartbeat == 11
             && node.node_type == GrpcNodeType::Worker as i32
     }));
-    let partitions = cluster_state.partitions.expect("partitions");
-    let mapping = partitions.mapping.get(&7).expect("mapping");
+    let mapping = cluster_state.partitions.get(&7).expect("mapping");
     assert_eq!(mapping.master, worker_node_id.to_string());
     assert_eq!(
         mapping.replicas.iter().cloned().collect::<HashSet<_>>(),
         HashSet::from([manager_node_id.to_string()])
-    );
-    let old_replicas = partitions.old_replicas.get(&6).expect("old replicas");
-    assert_eq!(
-        old_replicas
-            .replicas
-            .iter()
-            .cloned()
-            .collect::<HashSet<_>>(),
-        HashSet::from([manager_node_id.to_string(), worker_node_id.to_string()])
     );
 
     let _ = me;
@@ -184,7 +168,7 @@ async fn output_routes_cluster_state_to_manager_session_includes_partitions() {
             last_heartbeat: 77,
             node_type: domain::NodeType::Manager,
         }],
-        domain::Partitions::default(),
+        HashMap::new(),
     )
     .await;
 
@@ -206,13 +190,7 @@ async fn output_routes_cluster_state_to_manager_session_includes_partitions() {
     );
     assert_eq!(node.last_heartbeat, 77);
     assert_eq!(node.node_type, GrpcNodeType::Manager as i32);
-    assert!(
-        cluster_state
-            .partitions
-            .expect("partitions")
-            .mapping
-            .is_empty()
-    );
+    assert!(cluster_state.partitions.is_empty());
 }
 
 #[tokio::test]

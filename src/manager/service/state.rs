@@ -10,12 +10,6 @@ pub(super) struct Node {
     pub node_type: NodeType,
 }
 
-#[derive(Debug, Default)]
-pub(super) struct Partitions {
-    pub mapping: HashMap<u16, Partition>,
-    pub old_replicas: HashMap<u16, HashSet<NodeId>>,
-}
-
 #[derive(Debug)]
 pub(super) struct Partition {
     pub master: NodeId,
@@ -37,6 +31,6 @@ pub(super) struct State {
     pub(super) epoch: Option<u64>,
     pub(super) elected_leader_id: Option<NodeId>,
     pub(super) nodes: HashMap<NodeId, Node>,
-    pub(super) partitions: Partitions,
+    pub(super) partitions: HashMap<u16, Partition>,
     pub(super) workers_with_calculated_partitions: BTreeSet<NodeId>,
 }
