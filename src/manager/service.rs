@@ -61,9 +61,13 @@ impl ManagerService {
         if let Some(state) = self.state.as_mut() {
             heartbeats(state, output, &self.me);
             start_election_if_needed(state, &mut self.elections, &self.me, output);
-            let config = self.config.read().await;
-            let replication_factor = config.replication_factor.expect("required and has default");
-            drop(config);
+            let replication_factor = {
+                self.config
+                    .read()
+                    .await
+                    .replication_factor
+                    .expect("required and has default")
+            };
             worker_partitions(state, output, &self.me, replication_factor);
         }
         tracing::debug!("state: {:?}", self.state);
@@ -123,11 +127,11 @@ impl ManagerService {
     }
 
     async fn get_init_messages(&mut self) -> Vec<NodeProtocol> {
+        let manager_host_port = { self.config.read().await.manager_host_port.clone() };
+
         if self.state.is_some() {
             vec![]
-        } else if let Some((manager_host, manager_port)) =
-            &self.config.read().await.manager_host_port
-        {
+        } else if let Some((manager_host, manager_port)) = manager_host_port {
             let mut nodes = HashMap::new();
             nodes.insert(
                 self.me.id.clone(),
@@ -147,8 +151,8 @@ impl ManagerService {
             });
             vec![NodeProtocol::NewConnection {
                 id: None,
-                host: manager_host.clone(),
-                port: *manager_port as u32,
+                host: manager_host,
+                port: manager_port as u32,
                 manager: true,
             }]
         } else {

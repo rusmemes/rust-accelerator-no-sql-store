@@ -116,9 +116,10 @@ impl ManagerApi for ManagerApiService {
                     })),
             })) = input_stream.message().await
             {
-                let mut guard = config.write().await;
-                guard.replication_factor = Some(replication_factor as usize);
-                drop(guard);
+                {
+                    let mut guard = config.write().await;
+                    guard.replication_factor = Some(replication_factor as usize);
+                }
 
                 let id: NodeId = id.into();
                 manager_sessions
@@ -226,9 +227,8 @@ pub async fn start_server(
     channel: (Sender<NodeProtocol>, Receiver<NodeProtocol>),
     cancellation_token: CancellationToken,
 ) -> Result<(), GrpcServerError> {
-    let guard = config.read().await;
-    let grpc_address = format!("127.0.0.1:{}", guard.grpc_port).as_str().parse()?;
-    drop(guard);
+    let grpc_port = { config.read().await.grpc_port };
+    let grpc_address = format!("127.0.0.1:{grpc_port}").as_str().parse()?;
 
     tracing::info!("GRPC Server is starting at {}", grpc_address);
 

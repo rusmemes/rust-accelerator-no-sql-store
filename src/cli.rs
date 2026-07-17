@@ -41,7 +41,7 @@ pub enum Command {
 
         #[arg(long, requires = "manager_host")]
         manager_port: Option<u16>,
-        
+
         #[arg(
             long,
             default_value_t = 3,
