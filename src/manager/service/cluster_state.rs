@@ -160,8 +160,14 @@ pub(super) fn handle_remove_old_partition(
     partition_id: u16,
     me: &Me,
 ) {
-    if let Some(old_replicas) = state.partitions.old_replicas.get_mut(&partition_id) {
+    let remove = if let Some(old_replicas) = state.partitions.old_replicas.get_mut(&partition_id) {
         old_replicas.remove(&replica_id);
+        old_replicas.is_empty()
+    } else {
+        false
+    };
+    if remove {
+        state.partitions.old_replicas.remove(&partition_id);
     }
     if state.elected_leader_id.as_ref() == Some(&me.id) {
         for recipient_id in state
