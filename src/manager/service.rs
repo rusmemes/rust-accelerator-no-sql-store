@@ -74,7 +74,7 @@ impl ManagerService {
                 self.config
                     .read()
                     .await
-                    .manager_host_and_port()
+                    .manager_host_port()
                     .map(|(host, port)| (host.clone(), *port))
             } {
                 self.state = Some(State::without_epoch(nodes));

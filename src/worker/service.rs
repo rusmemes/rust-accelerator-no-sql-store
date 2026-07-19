@@ -38,7 +38,7 @@ impl WorkerService {
             );
             let (host, port) = self
                 .config
-                .manager_host_and_port()
+                .manager_host_port()
                 .expect("Worker cannot run without connection options");
             output.push(WorkerProtocol::NewConnection {
                 id: None,

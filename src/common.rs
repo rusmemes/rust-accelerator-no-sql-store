@@ -136,14 +136,14 @@ impl Config {
         }
     }
 
-    pub fn manager_host_and_port(&self) -> Option<&(String, u16)> {
+    pub fn manager_host_port(&self) -> Option<&(String, u16)> {
         match self {
             Config::Manager { manager_host_port, .. } => manager_host_port.as_ref(),
             Config::Worker { manager_host_port, .. } => Some(manager_host_port),
         }
     }
 
-    pub fn host_and_port(&self) -> &(String, u16) {
+    pub fn self_host_port(&self) -> &(String, u16) {
         match self {
             Config::Manager { self_host_port, .. } => self_host_port,
             Config::Worker { self_host_port, .. } => self_host_port,
