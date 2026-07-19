@@ -1,6 +1,6 @@
 use super::*;
 use crate::common::now_millis;
-use crate::manager::domain::NodeProtocol;
+use crate::manager::domain::ManagerProtocol;
 use crate::manager::service::test_support::*;
 use crate::manager::service::State;
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ async fn new_connection_adds_node_and_requests_cluster_state() {
     let mut output = vec![];
     service
         .process(
-            NodeProtocol::NewConnection {
+            ManagerProtocol::NewConnection {
                 id: Some(peer_id.clone()),
                 host: "peer.local".to_string(),
                 port: 9001,
@@ -33,7 +33,7 @@ async fn new_connection_adds_node_and_requests_cluster_state() {
 
     assert!(matches!(
         output.as_slice(),
-        [NodeProtocol::GetClusterState { id }] if id == &peer_id
+        [ManagerProtocol::GetClusterState { id }] if id == &peer_id
     ));
 
     let state = service.state.as_ref().expect("state exists");
@@ -115,7 +115,7 @@ async fn node_disconnected_clears_current_leader() {
     let mut output = vec![];
     service
         .process(
-            NodeProtocol::NodeDisconnected { id: leader.clone() },
+            ManagerProtocol::NodeDisconnected { id: leader.clone() },
             &mut output,
         )
         .await;

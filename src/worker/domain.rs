@@ -1,7 +1,7 @@
 use crate::common::{ClusterState, Heartbeat, NodeId};
 
 #[derive(Debug)]
-pub enum ManagerProtocol {
+pub enum WorkerProtocol {
     NewConnection {
         id: Option<NodeId>,
         host: String,
@@ -18,21 +18,6 @@ pub enum ManagerProtocol {
     ClusterState {
         recipient_id: NodeId,
         state: ClusterState,
-    },
-    VoteRequest {
-        id: NodeId,
-        epoch: u64,
-        ts: u64,
-    },
-    VoteResponse {
-        id: NodeId,
-        leader_id: NodeId,
-        ts: u64,
-    },
-    Leader {
-        id: NodeId,
-        epoch: u64,
-        ts: u64,
     },
     NodeDisconnected {
         id: NodeId,

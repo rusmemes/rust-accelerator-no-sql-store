@@ -1,5 +1,5 @@
 use super::*;
-use crate::manager::domain::NodeProtocol;
+use crate::manager::domain::ManagerProtocol;
 use crate::manager::grpc::api::v1::{worker_event, Heartbeat as GrpcHeartbeat, WorkerEvent};
 use crate::manager::grpc::common::v1::GetState;
 use crate::manager::grpc::test_support::*;
@@ -31,7 +31,7 @@ async fn input_from_worker_forwards_messages_and_stops_when_stream_ends() {
         .expect("new connection");
     assert!(matches!(
         new_connection,
-        NodeProtocol::NewConnection {
+        ManagerProtocol::NewConnection {
             id: Some(id),
             host,
             port,
@@ -63,7 +63,7 @@ async fn input_from_worker_forwards_messages_and_stops_when_stream_ends() {
         .expect("heartbeat");
     assert!(matches!(
         heartbeat,
-        NodeProtocol::Heartbeat {
+        ManagerProtocol::Heartbeat {
             recipient_id,
             heartbeat: Heartbeat { id, ts },
         } if recipient_id == worker_id && id == worker_id && ts == 44
@@ -75,7 +75,7 @@ async fn input_from_worker_forwards_messages_and_stops_when_stream_ends() {
         .expect("cluster state");
     assert!(matches!(
         get_cluster_state,
-        NodeProtocol::GetClusterState { id } if id == worker_id
+        ManagerProtocol::GetClusterState { id } if id == worker_id
     ));
 
     timeout(Duration::from_secs(1), worker_task)

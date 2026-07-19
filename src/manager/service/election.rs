@@ -1,6 +1,6 @@
 use super::{get_random_number, Node, State};
 use crate::common::{Me, NodeId, NodeType};
-use crate::manager::domain::NodeProtocol;
+use crate::manager::domain::ManagerProtocol;
 use std::cmp::max;
 use std::collections::{BTreeMap, HashSet};
 
@@ -23,7 +23,7 @@ pub(super) fn start_election_if_needed(
     state: &mut State,
     elections: &mut BTreeMap<u64, Election>,
     me: &Me,
-    output: &mut Vec<NodeProtocol>,
+    output: &mut Vec<ManagerProtocol>,
 ) {
     if state.elected_leader_id.is_none()
         && state.nodes.len() > 1
@@ -57,7 +57,7 @@ pub(super) fn start_election_if_needed(
                 .iter()
                 .filter(|(key, value)| *key != &me.id && value.is_manager())
                 .for_each(|(node_id, _)| {
-                    output.push(NodeProtocol::VoteRequest {
+                    output.push(ManagerProtocol::VoteRequest {
                         id: node_id.clone(),
                         epoch: next_epoch,
                         ts: curr_ts,
@@ -70,7 +70,7 @@ pub(super) fn start_election_if_needed(
 }
 
 pub(super) fn handle_leader(
-    output: &mut Vec<NodeProtocol>,
+    output: &mut Vec<ManagerProtocol>,
     state: &mut State,
     id: NodeId,
     epoch: u64,
@@ -97,14 +97,14 @@ pub(super) fn handle_leader(
                     .nodes
                     .iter()
                     .filter(|(key, node)| *key != &me.id && node.is_manager())
-                    .map(|(key, _)| NodeProtocol::GetClusterState { id: key.clone() }),
+                    .map(|(key, _)| ManagerProtocol::GetClusterState { id: key.clone() }),
             );
         }
     }
 }
 
 pub(super) fn handle_vote_response(
-    output: &mut Vec<NodeProtocol>,
+    output: &mut Vec<ManagerProtocol>,
     state: &mut State,
     id: NodeId,
     leader_id: NodeId,
@@ -150,7 +150,7 @@ pub(super) fn handle_vote_response(
                     .keys()
                     .filter(|&key| *key != me.id)
                     .for_each(|key| {
-                        output.push(NodeProtocol::Leader {
+                        output.push(ManagerProtocol::Leader {
                             id: key.clone(),
                             epoch,
                             ts,
@@ -170,13 +170,13 @@ pub(super) fn handle_vote_response(
                 .nodes
                 .iter()
                 .filter(|(key, node)| *key != &me.id && node.is_manager())
-                .map(|(key, _)| NodeProtocol::GetClusterState { id: key.clone() }),
+                .map(|(key, _)| ManagerProtocol::GetClusterState { id: key.clone() }),
         );
     }
 }
 
 pub(super) fn handle_vote_request(
-    output: &mut Vec<NodeProtocol>,
+    output: &mut Vec<ManagerProtocol>,
     state: &mut State,
     id: NodeId,
     epoch: u64,
@@ -201,13 +201,13 @@ pub(super) fn handle_vote_request(
                     candidate_id: id.clone(),
                 },
             );
-            output.push(NodeProtocol::VoteResponse {
+            output.push(ManagerProtocol::VoteResponse {
                 id: id.clone(),
                 leader_id: id,
                 ts,
             });
         } else if let Some(Election::Other { ts, candidate_id }) = elections.get(&epoch) {
-            output.push(NodeProtocol::VoteResponse {
+            output.push(ManagerProtocol::VoteResponse {
                 id,
                 leader_id: candidate_id.clone(),
                 ts: *ts,

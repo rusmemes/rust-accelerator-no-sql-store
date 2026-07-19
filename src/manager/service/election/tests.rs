@@ -1,6 +1,6 @@
 use super::*;
 use crate::common::now_millis;
-use crate::manager::domain::NodeProtocol;
+use crate::manager::domain::ManagerProtocol;
 use crate::manager::service::test_support::*;
 use crate::manager::service::State;
 use std::collections::{HashMap, HashSet};
@@ -27,7 +27,7 @@ async fn vote_request_adds_new_election_reuses_candidate_and_ignores_stale_epoch
     let mut first = vec![];
     service
         .process(
-            NodeProtocol::VoteRequest {
+            ManagerProtocol::VoteRequest {
                 id: peer_one.clone(),
                 epoch: 1,
                 ts: 100,
@@ -37,14 +37,14 @@ async fn vote_request_adds_new_election_reuses_candidate_and_ignores_stale_epoch
         .await;
     assert!(matches!(
         first.as_slice(),
-        [NodeProtocol::VoteResponse { id, leader_id, ts }]
+        [ManagerProtocol::VoteResponse { id, leader_id, ts }]
             if id == &peer_one && leader_id == &peer_one && *ts == 100
     ));
 
     let mut second = vec![];
     service
         .process(
-            NodeProtocol::VoteRequest {
+            ManagerProtocol::VoteRequest {
                 id: peer_two.clone(),
                 epoch: 1,
                 ts: 200,
@@ -55,14 +55,14 @@ async fn vote_request_adds_new_election_reuses_candidate_and_ignores_stale_epoch
 
     assert!(matches!(
         second.as_slice(),
-        [NodeProtocol::VoteResponse { id, leader_id, ts }]
+        [ManagerProtocol::VoteResponse { id, leader_id, ts }]
             if id == &peer_two && leader_id == &peer_one && *ts == 100
     ));
 
     let mut stale = vec![];
     service
         .process(
-            NodeProtocol::VoteRequest {
+            ManagerProtocol::VoteRequest {
                 id: peer_two.clone(),
                 epoch: 0,
                 ts: 300,
@@ -111,7 +111,7 @@ async fn vote_response_for_unknown_leader_requests_cluster_state() {
 
     assert!(matches!(
         output.as_slice(),
-        [NodeProtocol::GetClusterState { id }] if id == &peer
+        [ManagerProtocol::GetClusterState { id }] if id == &peer
     ));
 }
 
@@ -172,8 +172,8 @@ async fn vote_responses_elect_self_and_broadcast_leader() {
     assert!(matches!(
         second.as_slice(),
         [
-            NodeProtocol::Leader { id, epoch, ts },
-            NodeProtocol::Leader { id: id2, epoch: epoch2, ts: ts2 }
+            ManagerProtocol::Leader { id, epoch, ts },
+            ManagerProtocol::Leader { id: id2, epoch: epoch2, ts: ts2 }
         ] if *epoch == 1
             && *ts == 100
             && *epoch2 == 1
@@ -228,12 +228,12 @@ async fn vote_responses_complete_election_with_worker_nodes_present() {
     assert!(
         output
             .iter()
-            .any(|msg| matches!(msg, NodeProtocol::Leader { id, .. } if id == &manager_peer))
+            .any(|msg| matches!(msg, ManagerProtocol::Leader { id, .. } if id == &manager_peer))
     );
     assert!(
         output
             .iter()
-            .any(|msg| matches!(msg, NodeProtocol::Leader { id, .. } if id == &worker_peer))
+            .any(|msg| matches!(msg, ManagerProtocol::Leader { id, .. } if id == &worker_peer))
     );
 }
 
@@ -314,7 +314,7 @@ async fn leader_with_unknown_id_requests_cluster_state_from_manager_peers_only()
 
     assert!(matches!(
         output.as_slice(),
-        [NodeProtocol::GetClusterState { id }] if id == &manager_peer
+        [ManagerProtocol::GetClusterState { id }] if id == &manager_peer
     ));
 }
 
@@ -398,7 +398,7 @@ async fn tick_starts_election_when_leader_is_missing() {
 
     assert!(matches!(
         output.as_slice(),
-        [NodeProtocol::VoteRequest { id, epoch, .. }] if id == &peer && *epoch == 5
+        [ManagerProtocol::VoteRequest { id, epoch, .. }] if id == &peer && *epoch == 5
     ));
     assert!(matches!(
         service.elections.last_key_value(),
@@ -430,7 +430,7 @@ async fn tick_starts_a_new_election_only_for_manager_peers() {
 
     assert!(matches!(
         output.as_slice(),
-        [NodeProtocol::VoteRequest { id, epoch, .. }] if id == &manager_peer && *epoch == 8
+        [ManagerProtocol::VoteRequest { id, epoch, .. }] if id == &manager_peer && *epoch == 8
     ));
     assert!(matches!(
         service.elections.last_key_value(),

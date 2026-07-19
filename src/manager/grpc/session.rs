@@ -1,5 +1,5 @@
 use crate::common::NodeId;
-use crate::manager::domain::NodeProtocol;
+use crate::manager::domain::ManagerProtocol;
 use crate::manager::grpc::api::v1::{ManagerEvent, WorkerEvent};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -106,7 +106,7 @@ impl IOStreamExt<WorkerEvent, WorkerIOStreamError> for WorkerIOStream {
 pub(super) async fn handle_common<Event, Error, Stream>(
     event_type: &'static str,
     event: impl FnOnce() -> Event,
-    tx: &Sender<NodeProtocol>,
+    tx: &Sender<ManagerProtocol>,
     sessions: &RwLock<HashMap<NodeId, Stream>>,
     id: NodeId,
 ) where
@@ -124,7 +124,7 @@ pub(super) async fn handle_common<Event, Error, Stream>(
     if is_closed {
         tracing::debug!("Node {} is disconnected", id);
         sessions.write().await.remove(&id);
-        let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
+        let _ = tx.send(ManagerProtocol::NodeDisconnected { id }).await;
     } else if let Some(sender) = { sessions.read().await.get(&id).cloned() } {
         if let Err(e) = sender.send(event()).await {
             tracing::error!("Error sending {event_type} to {}: {:?}", id, e);

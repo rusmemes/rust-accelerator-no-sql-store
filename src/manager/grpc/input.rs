@@ -1,7 +1,7 @@
 use crate::{
     common::{ClusterNode, ClusterState, Heartbeat, Me, NodeId},
     manager::{
-        domain::NodeProtocol,
+        domain::ManagerProtocol,
         grpc::{
             api::v1::{
                 manager_event::Payload,
@@ -20,7 +20,6 @@ use crate::{
         }
     },
 };
-use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
 use tonic::{Status, Streaming};
@@ -30,12 +29,12 @@ pub(super) async fn input_from_worker<S>(
     id: &NodeId,
     host: String,
     port: u32,
-    tx: Sender<NodeProtocol>,
+    tx: Sender<ManagerProtocol>,
 ) where
     S: tokio_stream::Stream<Item = Result<WorkerEvent, Status>> + Unpin,
 {
     if tx
-        .send(NodeProtocol::NewConnection {
+        .send(ManagerProtocol::NewConnection {
             id: Some(id.clone()),
             host,
             port,
@@ -55,7 +54,7 @@ pub(super) async fn input_from_worker<S>(
                     partition_id,
                 }) => {
                     if let Err(e) = tx
-                        .send(NodeProtocol::RemoveOldPartition {
+                        .send(ManagerProtocol::RemoveOldPartition {
                             id: id.clone(),
                             replica_id: replica_id.into(),
                             partition_id: partition_id as u16,
@@ -68,7 +67,7 @@ pub(super) async fn input_from_worker<S>(
                 }
                 worker_event::Payload::Heartbeat(GrpcHeartbeat { id: node_id, ts }) => {
                     if let Err(e) = tx
-                        .send(NodeProtocol::Heartbeat {
+                        .send(ManagerProtocol::Heartbeat {
                             recipient_id: id.clone(),
                             heartbeat: Heartbeat {
                                 id: node_id.into(),
@@ -83,7 +82,7 @@ pub(super) async fn input_from_worker<S>(
                 }
                 worker_event::Payload::GetClusterState(_) => {
                     if let Err(e) = tx
-                        .send(NodeProtocol::GetClusterState { id: id.clone() })
+                        .send(ManagerProtocol::GetClusterState { id: id.clone() })
                         .await
                     {
                         tracing::error!("Error processing GetClusterState request: {}", e);
@@ -116,15 +115,15 @@ pub(super) async fn input_from_worker<S>(
 }
 
 pub(super) async fn input_from_manager(
-    me: Arc<Me>,
+    me: Me,
     mut input: Streaming<ManagerEvent>,
     id: &NodeId,
     host: String,
     port: u32,
-    tx: Sender<NodeProtocol>,
+    tx: Sender<ManagerProtocol>,
 ) {
     if tx
-        .send(NodeProtocol::NewConnection {
+        .send(ManagerProtocol::NewConnection {
             id: Some(id.clone()),
             host,
             port,
@@ -144,7 +143,7 @@ pub(super) async fn input_from_manager(
                     partition_id,
                 }) => {
                     if let Err(e) = tx
-                        .send(NodeProtocol::RemoveOldPartition {
+                        .send(ManagerProtocol::RemoveOldPartition {
                             id: id.clone(),
                             replica_id: replica_id.into(),
                             partition_id: partition_id as u16,
@@ -157,7 +156,7 @@ pub(super) async fn input_from_manager(
                 }
                 Payload::Heartbeat(GrpcHeartbeat { id: node_id, ts }) => {
                     if let Err(e) = tx
-                        .send(NodeProtocol::Heartbeat {
+                        .send(ManagerProtocol::Heartbeat {
                             recipient_id: id.clone(),
                             heartbeat: Heartbeat {
                                 id: node_id.into(),
@@ -172,7 +171,7 @@ pub(super) async fn input_from_manager(
                 }
                 Payload::GetClusterState(_) => {
                     if let Err(e) = tx
-                        .send(NodeProtocol::GetClusterState { id: id.clone() })
+                        .send(ManagerProtocol::GetClusterState { id: id.clone() })
                         .await
                     {
                         tracing::error!("Error processing GetClusterState request: {}", e);
@@ -188,7 +187,7 @@ pub(super) async fn input_from_manager(
                 }) => {
                     if let Some(partitions) = partitions {
                         if let Err(e) = tx
-                            .send(NodeProtocol::ClusterState {
+                            .send(ManagerProtocol::ClusterState {
                                 recipient_id: me.id.clone(),
                                 state: ClusterState {
                                     epoch,
@@ -230,7 +229,7 @@ pub(super) async fn input_from_manager(
                 }
                 Payload::VoteRequest(GrpcVoteRequest { epoch, ts }) => {
                     if let Err(e) = tx
-                        .send(NodeProtocol::VoteRequest {
+                        .send(ManagerProtocol::VoteRequest {
                             id: id.clone(),
                             epoch,
                             ts,
@@ -243,7 +242,7 @@ pub(super) async fn input_from_manager(
                 }
                 Payload::VoteResponse(GrpcVoteResponse { leader_id, ts }) => {
                     if let Err(e) = tx
-                        .send(NodeProtocol::VoteResponse {
+                        .send(ManagerProtocol::VoteResponse {
                             id: id.clone(),
                             leader_id: leader_id.into(),
                             ts,
@@ -256,7 +255,7 @@ pub(super) async fn input_from_manager(
                 }
                 Payload::Leader(GrpcLeader { id, epoch, ts }) => {
                     if let Err(e) = tx
-                        .send(NodeProtocol::Leader {
+                        .send(ManagerProtocol::Leader {
                             id: id.into(),
                             epoch,
                             ts,

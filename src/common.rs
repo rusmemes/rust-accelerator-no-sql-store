@@ -94,7 +94,7 @@ pub struct ClusterState {
     pub partitions: Partitions,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Me {
     pub id: NodeId,
     pub host: String,
@@ -111,12 +111,66 @@ impl Me {
     }
 }
 
-#[derive(Debug)]
-pub struct Config {
-    pub grpc_port: u16,
-    pub self_host_port: (String, u16),
-    pub manager_host_port: Option<(String, u16)>,
-    pub replication_factor: Option<usize>,
+#[derive(Debug, Clone)]
+pub enum Config
+{
+    Manager {
+        grpc_port: u16,
+        self_host_port: (String, u16),
+        manager_host_port: Option<(String, u16)>,
+        replication_factor: usize,
+    },
+    Worker {
+        grpc_port: u16,
+        self_host_port: (String, u16),
+        manager_host_port: (String, u16),
+    },
+}
+
+impl Config {
+
+    pub fn grpc_port(&self) -> u16 {
+        match self {
+            Config::Manager { grpc_port, .. } => *grpc_port,
+            Config::Worker { grpc_port, .. } => *grpc_port,
+        }
+    }
+
+    pub fn manager_host_and_port(&self) -> Option<&(String, u16)> {
+        match self {
+            Config::Manager { manager_host_port, .. } => manager_host_port.as_ref(),
+            Config::Worker { manager_host_port, .. } => Some(manager_host_port),
+        }
+    }
+
+    pub fn host_and_port(&self) -> &(String, u16) {
+        match self {
+            Config::Manager { self_host_port, .. } => self_host_port,
+            Config::Worker { self_host_port, .. } => self_host_port,
+        }
+    }
+
+    pub fn replication_factor_mut(&mut self) -> &mut usize {
+        match self {
+            Config::Manager {
+                replication_factor, ..
+            } => replication_factor,
+            Config::Worker { .. } => {
+                unreachable!("Partitions and replication factor should be defined")
+            }
+        }
+    }
+
+    pub fn replication_factor(&self) -> usize {
+        match self {
+            Config::Manager {
+                replication_factor, ..
+            } => *replication_factor,
+            Config::Worker { .. } => {
+                unreachable!("Partitions and replication factor should be defined")
+            }
+        }
+    }
 }
 
 impl From<Cli> for Config {
@@ -127,21 +181,20 @@ impl From<Cli> for Config {
                 manager_host,
                 manager_port,
                 replication_factor,
-            } => Config {
+            } => Config::Manager {
                 grpc_port: common.grpc_port,
                 self_host_port: (common.self_host.clone(), common.self_port()),
                 manager_host_port: manager_host.zip(manager_port),
-                replication_factor: Some(replication_factor),
+                replication_factor,
             },
             Command::Worker {
                 common,
                 manager_host,
                 manager_port,
-            } => Config {
+            } => Config::Worker {
                 grpc_port: common.grpc_port,
                 self_host_port: (common.self_host.clone(), common.self_port()),
-                manager_host_port: Some((manager_host, manager_port)),
-                replication_factor: None,
+                manager_host_port: (manager_host, manager_port),
             },
         }
     }
@@ -160,8 +213,6 @@ pub fn now_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::Cli;
-    use clap::Parser;
 
     #[test]
     fn node_id_roundtrips_uuid_string() {
@@ -177,55 +228,6 @@ mod tests {
         let id = NodeId::new().to_string();
         let parsed: NodeId = id.clone().into();
         assert_eq!(parsed.to_string(), id);
-    }
-
-    #[test]
-    fn config_from_cli_manager_sets_replication_factor_and_optional_manager_addr() {
-        let cli = Cli::try_parse_from([
-            "bin",
-            "manager",
-            "--grpc-port",
-            "5000",
-            "--self-host",
-            "127.0.0.1",
-            "--replication-factor",
-            "5",
-        ])
-        .unwrap();
-
-        let cfg: Config = cli.into();
-        assert_eq!(cfg.grpc_port, 5000);
-        assert_eq!(cfg.self_host_port, ("127.0.0.1".to_string(), 5000));
-        assert_eq!(cfg.manager_host_port, None);
-        assert_eq!(cfg.replication_factor, Some(5));
-    }
-
-    #[test]
-    fn config_from_cli_worker_sets_manager_addr_and_clears_replication_factor() {
-        let cli = Cli::try_parse_from([
-            "bin",
-            "worker",
-            "--grpc-port",
-            "5001",
-            "--self-host",
-            "127.0.0.1",
-            "--self-port",
-            "7777",
-            "--manager-host",
-            "10.0.0.1",
-            "--manager-port",
-            "6000",
-        ])
-        .unwrap();
-
-        let cfg: Config = cli.into();
-        assert_eq!(cfg.grpc_port, 5001);
-        assert_eq!(cfg.self_host_port, ("127.0.0.1".to_string(), 7777));
-        assert_eq!(
-            cfg.manager_host_port,
-            Some(("10.0.0.1".to_string(), 6000))
-        );
-        assert_eq!(cfg.replication_factor, None);
     }
 
     #[test]

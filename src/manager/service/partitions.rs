@@ -1,13 +1,13 @@
 use super::State;
 use crate::common::{ClusterState, Me, NodeId, Partition, Partitions};
-use crate::manager::domain::NodeProtocol;
+use crate::manager::domain::ManagerProtocol;
 use std::collections::{BTreeSet, HashSet};
 
 const PARTITIONS_AMOUNT: usize = 4096;
 
 pub(super) fn worker_partitions(
     state: &mut State,
-    output: &mut Vec<NodeProtocol>,
+    output: &mut Vec<ManagerProtocol>,
     me: &Me,
     replication_factor: usize,
 ) {
@@ -42,7 +42,7 @@ pub(super) fn worker_partitions(
                 state.workers_with_calculated_partitions = vec.into_iter().collect();
 
                 for id in state.nodes.keys().filter(|&key| *key != me.id) {
-                    output.push(NodeProtocol::ClusterState {
+                    output.push(ManagerProtocol::ClusterState {
                         recipient_id: id.clone(),
                         state: workers_state.clone(),
                     });
