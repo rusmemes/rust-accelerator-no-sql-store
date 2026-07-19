@@ -51,7 +51,7 @@ type OpenConnectionStream = ReceiverStream<Result<ManagerEvent, Status>>;
 type OpenWorkerConnectionStream = ReceiverStream<Result<WorkerEvent, Status>>;
 
 pub struct ManagerApiService {
-    me: Arc<Me>,
+    me: Me,
     manager_sessions: Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
     worker_sessions: Arc<RwLock<HashMap<NodeId, WorkerIOStream>>>,
     tx: Sender<ManagerProtocol>,
@@ -60,7 +60,7 @@ pub struct ManagerApiService {
 impl ManagerApiService {
     pub fn new(
         (tx, rx): (Sender<ManagerProtocol>, Receiver<ManagerProtocol>),
-        me: Arc<Me>,
+        me: Me,
         config: Arc<RwLock<crate::common::Config>>,
     ) -> Self {
         let manager_sessions: Arc<RwLock<HashMap<NodeId, ManagerIOStream>>> = Default::default();
@@ -223,7 +223,7 @@ pub enum GrpcServerError {
 
 pub async fn start_server(
     config: Arc<RwLock<crate::common::Config>>,
-    me: Arc<Me>,
+    me: Me,
     channel: (Sender<ManagerProtocol>, Receiver<ManagerProtocol>),
     cancellation_token: CancellationToken,
 ) -> Result<(), GrpcServerError> {

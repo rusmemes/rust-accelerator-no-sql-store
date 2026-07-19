@@ -94,7 +94,7 @@ pub struct ClusterState {
     pub partitions: Partitions,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Me {
     pub id: NodeId,
     pub host: String,

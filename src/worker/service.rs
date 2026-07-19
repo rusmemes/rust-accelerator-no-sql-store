@@ -3,20 +3,19 @@ use crate::worker::domain::WorkerProtocol;
 use crate::worker::service::heartbeat::heartbeats;
 use crate::worker::service::state::State;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 mod state;
 mod heartbeat;
 
 #[derive(Debug)]
 struct WorkerService {
-    me: Arc<Me>,
+    me: Me,
     state: Option<State>,
     config: Config,
 }
 
 impl WorkerService {
-    pub fn new(me: Arc<Me>, config: Config) -> Self {
+    pub fn new(me: Me, config: Config) -> Self {
         Self {
             me,
             state: Default::default(),

@@ -15,7 +15,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Streaming};
 
 pub(super) async fn new_manager_connection(
-    me: &Arc<Me>,
+    me: &Me,
     tx: &Sender<ManagerProtocol>,
     sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
     host: String,
@@ -58,7 +58,7 @@ pub(super) async fn new_manager_connection(
 }
 
 async fn start_communication_with_manager(
-    me: &Arc<Me>,
+    me: &Me,
     tx: &Sender<ManagerProtocol>,
     sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
     host: String,

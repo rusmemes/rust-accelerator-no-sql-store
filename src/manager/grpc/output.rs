@@ -22,7 +22,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::RwLock;
 
 pub(super) async fn output(
-    me: Arc<Me>,
+    me: Me,
     tx: Sender<ManagerProtocol>,
     mut rx: Receiver<ManagerProtocol>,
     manager_sessions: Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,

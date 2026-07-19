@@ -7,12 +7,12 @@ pub(super) fn node_id(id: &str) -> NodeId {
     NodeId::from_string(id)
 }
 
-pub(super) fn me(id: &str) -> Arc<Me> {
-    Arc::new(Me {
+pub(super) fn me(id: &str) -> Me {
+    Me {
         id: node_id(id),
         host: "127.0.0.1".to_string(),
         port: 7000,
-    })
+    }
 }
 
 pub(super) fn shared_config(manager_host_port: Option<(String, u16)>) -> Arc<RwLock<Config>> {
@@ -24,7 +24,7 @@ pub(super) fn shared_config(manager_host_port: Option<(String, u16)>) -> Arc<RwL
     }))
 }
 
-pub(super) fn service(me: Arc<Me>) -> (ManagerService, Arc<RwLock<Config>>) {
+pub(super) fn service(me: Me) -> (ManagerService, Arc<RwLock<Config>>) {
     let config = shared_config(Some(("manager.local".to_string(), 9000)));
     (ManagerService::new(me, config.clone()), config)
 }

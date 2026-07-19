@@ -33,7 +33,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let (to_manager, from_grpc) = tokio::sync::mpsc::channel(CHANNEL_BUFFER_SIZE);
 
     let (host, port) = &config.host_and_port();
-    let me = Arc::new(Me::new(host.clone(), *port as u32));
+    let me = Me::new(host.clone(), *port as u32);
 
     tracing::info!("Starting manager {:?}", me);
 

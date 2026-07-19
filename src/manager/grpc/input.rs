@@ -20,7 +20,6 @@ use crate::{
         }
     },
 };
-use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
 use tonic::{Status, Streaming};
@@ -116,7 +115,7 @@ pub(super) async fn input_from_worker<S>(
 }
 
 pub(super) async fn input_from_manager(
-    me: Arc<Me>,
+    me: Me,
     mut input: Streaming<ManagerEvent>,
     id: &NodeId,
     host: String,

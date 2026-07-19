@@ -41,14 +41,14 @@ fn get_random_number() -> u64 {
 
 #[derive(Debug)]
 struct ManagerService {
-    me: Arc<Me>,
+    me: Me,
     state: Option<State>,
     elections: BTreeMap<u64, Election>,
     config: Arc<RwLock<Config>>,
 }
 
 impl ManagerService {
-    pub fn new(me: Arc<Me>, config: Arc<RwLock<Config>>) -> Self {
+    pub fn new(me: Me, config: Arc<RwLock<Config>>) -> Self {
         Self {
             me,
             state: Default::default(),
@@ -175,7 +175,7 @@ impl ManagerService {
 /// messages from gRPC, emits outbound protocol messages, and performs periodic
 /// heartbeat and election checks.
 pub async fn start_service(
-    me: Arc<Me>,
+    me: Me,
     config: Arc<RwLock<Config>>,
     (tx, mut rx): (Sender<ManagerProtocol>, Receiver<ManagerProtocol>),
     cancellation_token: CancellationToken,
