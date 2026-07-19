@@ -1,36 +1,5 @@
-use crate::common::NodeId;
-use crate::manager::domain::NodeType;
-use std::collections::{BTreeSet, HashMap, HashSet};
-
-#[derive(Debug)]
-pub(super) struct Node {
-    pub host: String,
-    pub port: u32,
-    pub last_heartbeat: u64,
-    pub node_type: NodeType,
-}
-
-#[derive(Debug, Default)]
-pub(super) struct Partitions {
-    pub mapping: HashMap<u16, Partition>,
-    pub old_replicas: HashMap<u16, HashSet<NodeId>>,
-}
-
-#[derive(Debug)]
-pub(super) struct Partition {
-    pub master: NodeId,
-    pub replicas: HashSet<NodeId>,
-}
-
-impl Node {
-    pub(super) fn is_manager(&self) -> bool {
-        matches!(self.node_type, NodeType::Manager)
-    }
-
-    pub(super) fn is_worker(&self) -> bool {
-        matches!(self.node_type, NodeType::Worker)
-    }
-}
+use crate::common::{Node, NodeId, Partitions};
+use std::collections::{BTreeSet, HashMap};
 
 #[derive(Debug)]
 pub(super) struct State {
@@ -39,4 +8,24 @@ pub(super) struct State {
     pub(super) nodes: HashMap<NodeId, Node>,
     pub(super) partitions: Partitions,
     pub(super) workers_with_calculated_partitions: BTreeSet<NodeId>,
+}
+
+impl State {
+    pub(super) fn with_epoch(nodes: HashMap<NodeId, Node>, epoch: u64) -> Self {
+        Self::new(nodes, Some(epoch))
+    }
+
+    pub(super) fn without_epoch(nodes: HashMap<NodeId, Node>) -> Self {
+        Self::new(nodes, None)
+    }
+
+    pub(super) fn new(nodes: HashMap<NodeId, Node>, epoch: Option<u64>) -> Self {
+        Self {
+            epoch,
+            elected_leader_id: None,
+            nodes,
+            partitions: Partitions::default(),
+            workers_with_calculated_partitions: BTreeSet::new(),
+        }
+    }
 }

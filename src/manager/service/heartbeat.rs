@@ -1,6 +1,6 @@
 use super::{get_random_number, Node, State};
-use crate::common::{now_millis, Me, NodeId};
-use crate::manager::domain::{Heartbeat, NodeProtocol, NodeType};
+use crate::common::{now_millis, Heartbeat, Me, NodeId, NodeType};
+use crate::manager::domain::NodeProtocol;
 
 const HEARTBEAT_INTERVAL_MS: u64 = 200;
 

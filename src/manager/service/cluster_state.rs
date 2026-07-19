@@ -1,8 +1,6 @@
-use super::{state, Node, State};
-use crate::common::{Me, NodeId};
-use crate::manager::domain::{
-    ClusterNode, ClusterState, NodeProtocol, NodeType, Partition, Partitions,
-};
+use super::{Node, State};
+use crate::common::{ClusterNode, ClusterState, Me, NodeId, NodeType, Partition, Partitions};
+use crate::manager::domain::NodeProtocol;
 use std::collections::HashMap;
 
 pub(super) fn handle_cluster_state(
@@ -24,7 +22,7 @@ pub(super) fn handle_cluster_state(
     };
 
     if accept {
-        state.partitions = domain_partitions_to_state(partitions);
+        state.partitions = partitions;
 
         for item in items {
             match item {
@@ -111,32 +109,8 @@ pub(super) fn handle_get_cluster_state(
     }
 }
 
-fn domain_partitions_to_state(partitions: Partitions) -> state::Partitions {
-    state::Partitions {
-        mapping: domain_partition_mapping_to_state(partitions.mapping),
-        old_replicas: partitions.old_replicas,
-    }
-}
-
-fn domain_partition_mapping_to_state(
-    mapping: HashMap<u16, Partition>,
-) -> HashMap<u16, state::Partition> {
-    mapping
-        .into_iter()
-        .map(|(partition_id, partition)| {
-            (
-                partition_id,
-                state::Partition {
-                    master: partition.master,
-                    replicas: partition.replicas,
-                },
-            )
-        })
-        .collect()
-}
-
 fn state_partition_mapping_to_domain(
-    mapping: &HashMap<u16, state::Partition>,
+    mapping: &HashMap<u16, Partition>,
 ) -> HashMap<u16, Partition> {
     mapping
         .iter()

@@ -1,5 +1,5 @@
 use super::*;
-use crate::manager::domain::{self, ClusterNode, NodeProtocol};
+use crate::common::{NodeType, Partition};
 use crate::manager::grpc::api::v1::{worker_event, Leader};
 use crate::manager::grpc::common::v1::NodeType as GrpcNodeType;
 use crate::manager::grpc::test_support::*;
@@ -87,20 +87,20 @@ async fn output_routes_cluster_state_to_worker_session_includes_partitions() {
                 host: "manager.local".to_string(),
                 port: 9001,
                 last_heartbeat: 10,
-                node_type: domain::NodeType::Manager,
+                node_type: NodeType::Manager,
             },
             ClusterNode {
                 id: worker_node_id.clone(),
                 host: "worker.local".to_string(),
                 port: 9100,
                 last_heartbeat: 11,
-                node_type: domain::NodeType::Worker,
+                node_type: NodeType::Worker,
             },
         ],
-        domain::Partitions {
+        Partitions {
             mapping: HashMap::from([(
                 7,
-                domain::Partition {
+                Partition {
                     master: worker_node_id.clone(),
                     replicas: HashSet::from([manager_node_id.clone()]),
                 },
@@ -182,9 +182,9 @@ async fn output_routes_cluster_state_to_manager_session_includes_partitions() {
             host: "self.local".to_string(),
             port: 7000,
             last_heartbeat: 77,
-            node_type: domain::NodeType::Manager,
+            node_type: NodeType::Manager,
         }],
-        domain::Partitions::default(),
+        Partitions::default(),
     )
     .await;
 

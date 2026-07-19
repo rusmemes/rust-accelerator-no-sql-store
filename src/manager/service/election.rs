@@ -1,6 +1,6 @@
 use super::{get_random_number, Node, State};
-use crate::common::{Me, NodeId};
-use crate::manager::domain::{NodeProtocol, NodeType};
+use crate::common::{Me, NodeId, NodeType};
+use crate::manager::domain::NodeProtocol;
 use std::cmp::max;
 use std::collections::{BTreeMap, HashSet};
 

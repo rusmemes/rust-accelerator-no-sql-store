@@ -1,6 +1,6 @@
 use super::{Node, State};
-use crate::common::{now_millis, Me, NodeId};
-use crate::manager::domain::{NodeProtocol, NodeType};
+use crate::common::{now_millis, Me, NodeId, NodeType};
+use crate::manager::domain::NodeProtocol;
 
 pub(super) fn handle_node_disconnected(state: &mut State, id: NodeId, me: &Me) {
     if let Some(_) = state.nodes.remove(&id) {

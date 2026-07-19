@@ -1,4 +1,5 @@
 use crate::cli::{Cli, Command};
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Hash, Debug)]
@@ -32,6 +33,65 @@ impl std::fmt::Display for NodeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeType {
+    Manager,
+    Worker,
+}
+
+#[derive(Debug)]
+pub struct Node {
+    pub host: String,
+    pub port: u32,
+    pub last_heartbeat: u64,
+    pub node_type: NodeType,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Partitions {
+    pub mapping: HashMap<u16, Partition>,
+    pub old_replicas: HashMap<u16, HashSet<NodeId>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Partition {
+    pub master: NodeId,
+    pub replicas: HashSet<NodeId>,
+}
+
+impl Node {
+    pub fn is_manager(&self) -> bool {
+        matches!(self.node_type, NodeType::Manager)
+    }
+
+    pub fn is_worker(&self) -> bool {
+        matches!(self.node_type, NodeType::Worker)
+    }
+}
+
+#[derive(Debug)]
+pub struct Heartbeat {
+    pub id: NodeId,
+    pub ts: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClusterNode {
+    pub id: NodeId,
+    pub host: String,
+    pub port: u32,
+    pub last_heartbeat: u64,
+    pub node_type: NodeType,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClusterState {
+    pub epoch: u64,
+    pub leader_id: NodeId,
+    pub items: Vec<ClusterNode>,
+    pub partitions: Partitions,
 }
 
 #[derive(Debug)]
@@ -95,4 +155,84 @@ pub fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .expect("Time went backwards")
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Cli;
+    use clap::Parser;
+
+    #[test]
+    fn node_id_roundtrips_uuid_string() {
+        let id = NodeId::new();
+        let s = id.to_string();
+        let parsed = NodeId::from_string(&s);
+        assert_eq!(parsed.to_string(), s);
+        assert_eq!(parsed.to_string(), format!("{}", parsed));
+    }
+
+    #[test]
+    fn node_id_from_string_from_string_impl() {
+        let id = NodeId::new().to_string();
+        let parsed: NodeId = id.clone().into();
+        assert_eq!(parsed.to_string(), id);
+    }
+
+    #[test]
+    fn config_from_cli_manager_sets_replication_factor_and_optional_manager_addr() {
+        let cli = Cli::try_parse_from([
+            "bin",
+            "manager",
+            "--grpc-port",
+            "5000",
+            "--self-host",
+            "127.0.0.1",
+            "--replication-factor",
+            "5",
+        ])
+        .unwrap();
+
+        let cfg: Config = cli.into();
+        assert_eq!(cfg.grpc_port, 5000);
+        assert_eq!(cfg.self_host_port, ("127.0.0.1".to_string(), 5000));
+        assert_eq!(cfg.manager_host_port, None);
+        assert_eq!(cfg.replication_factor, Some(5));
+    }
+
+    #[test]
+    fn config_from_cli_worker_sets_manager_addr_and_clears_replication_factor() {
+        let cli = Cli::try_parse_from([
+            "bin",
+            "worker",
+            "--grpc-port",
+            "5001",
+            "--self-host",
+            "127.0.0.1",
+            "--self-port",
+            "7777",
+            "--manager-host",
+            "10.0.0.1",
+            "--manager-port",
+            "6000",
+        ])
+        .unwrap();
+
+        let cfg: Config = cli.into();
+        assert_eq!(cfg.grpc_port, 5001);
+        assert_eq!(cfg.self_host_port, ("127.0.0.1".to_string(), 7777));
+        assert_eq!(
+            cfg.manager_host_port,
+            Some(("10.0.0.1".to_string(), 6000))
+        );
+        assert_eq!(cfg.replication_factor, None);
+    }
+
+    #[test]
+    fn now_millis_is_non_decreasing_over_time() {
+        let a = now_millis();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let b = now_millis();
+        assert!(b >= a);
+    }
 }

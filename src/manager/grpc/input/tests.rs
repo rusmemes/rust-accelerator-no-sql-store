@@ -1,7 +1,6 @@
 use super::*;
-use crate::manager::domain;
 use crate::manager::domain::NodeProtocol;
-use crate::manager::grpc::api::v1::{worker_event, Heartbeat, WorkerEvent};
+use crate::manager::grpc::api::v1::{worker_event, Heartbeat as GrpcHeartbeat, WorkerEvent};
 use crate::manager::grpc::common::v1::GetState;
 use crate::manager::grpc::test_support::*;
 use std::time::Duration;
@@ -42,7 +41,7 @@ async fn input_from_worker_forwards_messages_and_stops_when_stream_ends() {
 
     request_tx
         .send(Ok(WorkerEvent {
-            payload: Some(worker_event::Payload::Heartbeat(Heartbeat {
+            payload: Some(worker_event::Payload::Heartbeat(GrpcHeartbeat {
                 id: worker_id.to_string(),
                 ts: 44,
             })),
@@ -66,7 +65,7 @@ async fn input_from_worker_forwards_messages_and_stops_when_stream_ends() {
         heartbeat,
         NodeProtocol::Heartbeat {
             recipient_id,
-            heartbeat: domain::Heartbeat { id, ts },
+            heartbeat: Heartbeat { id, ts },
         } if recipient_id == worker_id && id == worker_id && ts == 44
     ));
 

@@ -1,12 +1,25 @@
-use crate::common::{Me, NodeId};
-use crate::manager::domain::{self, ClusterNode, NodeProtocol};
-use crate::manager::grpc::api::v1::manager_event::Payload;
-use crate::manager::grpc::api::v1::{worker_event, RemovePartitionFromReplica};
-use crate::manager::grpc::api::v1::{
-    Connect, Heartbeat, Leader, ManagerEvent, VoteRequest, VoteResponse, WorkerEvent,
+use crate::{
+    common::{ClusterNode, ClusterState, Heartbeat, Me, NodeId},
+    manager::{
+        domain::NodeProtocol,
+        grpc::{
+            api::v1::{
+                manager_event::Payload,
+                worker_event,
+                Connect as GrpcConnect,
+                Heartbeat as GrpcHeartbeat,
+                Leader as GrpcLeader,
+                ManagerEvent,
+                RemovePartitionFromReplica,
+                VoteRequest as GrpcVoteRequest,
+                VoteResponse as GrpcVoteResponse,
+                WorkerEvent
+            },
+            common::v1::{Addr, ClusterState as GrpcClusterState, Node},
+            conversions::{grpc_node_type_to_domain, grpc_partitions_to_domain}
+        }
+    },
 };
-use crate::manager::grpc::common::v1::{Addr, ClusterState, Node};
-use crate::manager::grpc::conversions::{grpc_node_type_to_domain, grpc_partitions_to_domain};
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
@@ -53,11 +66,11 @@ pub(super) async fn input_from_worker<S>(
                         break;
                     }
                 }
-                worker_event::Payload::Heartbeat(Heartbeat { id: node_id, ts }) => {
+                worker_event::Payload::Heartbeat(GrpcHeartbeat { id: node_id, ts }) => {
                     if let Err(e) = tx
                         .send(NodeProtocol::Heartbeat {
                             recipient_id: id.clone(),
-                            heartbeat: domain::Heartbeat {
+                            heartbeat: Heartbeat {
                                 id: node_id.into(),
                                 ts,
                             },
@@ -85,7 +98,7 @@ pub(super) async fn input_from_worker<S>(
                     tracing::error!("ManagerLeader is not expected to be received");
                     break;
                 }
-                worker_event::Payload::Connect(Connect { id: request_id, .. }) => {
+                worker_event::Payload::Connect(GrpcConnect { id: request_id, .. }) => {
                     tracing::error!(
                         "Received duplicated connect request from {}: id {}",
                         id,
@@ -142,11 +155,11 @@ pub(super) async fn input_from_manager(
                         break;
                     }
                 }
-                Payload::Heartbeat(Heartbeat { id: node_id, ts }) => {
+                Payload::Heartbeat(GrpcHeartbeat { id: node_id, ts }) => {
                     if let Err(e) = tx
                         .send(NodeProtocol::Heartbeat {
                             recipient_id: id.clone(),
-                            heartbeat: domain::Heartbeat {
+                            heartbeat: Heartbeat {
                                 id: node_id.into(),
                                 ts,
                             },
@@ -166,7 +179,7 @@ pub(super) async fn input_from_manager(
                         break;
                     }
                 }
-                Payload::ClusterState(ClusterState {
+                Payload::ClusterState(GrpcClusterState {
                     epoch,
                     leader_id,
                     nodes,
@@ -177,7 +190,7 @@ pub(super) async fn input_from_manager(
                         if let Err(e) = tx
                             .send(NodeProtocol::ClusterState {
                                 recipient_id: me.id.clone(),
-                                state: domain::ClusterState {
+                                state: ClusterState {
                                     epoch,
                                     leader_id: leader_id.into(),
                                     partitions: grpc_partitions_to_domain(partitions),
@@ -215,7 +228,7 @@ pub(super) async fn input_from_manager(
                         break;
                     }
                 }
-                Payload::VoteRequest(VoteRequest { epoch, ts }) => {
+                Payload::VoteRequest(GrpcVoteRequest { epoch, ts }) => {
                     if let Err(e) = tx
                         .send(NodeProtocol::VoteRequest {
                             id: id.clone(),
@@ -228,7 +241,7 @@ pub(super) async fn input_from_manager(
                         break;
                     }
                 }
-                Payload::VoteResponse(VoteResponse { leader_id, ts }) => {
+                Payload::VoteResponse(GrpcVoteResponse { leader_id, ts }) => {
                     if let Err(e) = tx
                         .send(NodeProtocol::VoteResponse {
                             id: id.clone(),
@@ -241,7 +254,7 @@ pub(super) async fn input_from_manager(
                         break;
                     }
                 }
-                Payload::Leader(Leader { id, epoch, ts }) => {
+                Payload::Leader(GrpcLeader { id, epoch, ts }) => {
                     if let Err(e) = tx
                         .send(NodeProtocol::Leader {
                             id: id.into(),
@@ -254,7 +267,7 @@ pub(super) async fn input_from_manager(
                         break;
                     }
                 }
-                Payload::Connect(Connect { id: request_id, .. }) => {
+                Payload::Connect(GrpcConnect { id: request_id, .. }) => {
                     tracing::error!(
                         "Received duplicated connect request from {}: id {}",
                         id,
