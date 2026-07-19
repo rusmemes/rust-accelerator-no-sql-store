@@ -1,5 +1,5 @@
 use crate::common::{now_millis, ClusterState, Config, Heartbeat, Me, Node, NodeType};
-use crate::manager::domain::NodeProtocol;
+use crate::manager::domain::ManagerProtocol;
 use cluster_state::{handle_cluster_state, handle_get_cluster_state};
 use connection::{handle_new_connection, handle_node_disconnected};
 use election::{
@@ -57,7 +57,7 @@ impl ManagerService {
         }
     }
 
-    async fn get_init_messages(&mut self) -> Vec<NodeProtocol> {
+    async fn get_init_messages(&mut self) -> Vec<ManagerProtocol> {
         let mut output = vec![];
         if let None = self.state {
             let mut nodes = HashMap::new();
@@ -70,11 +70,15 @@ impl ManagerService {
                     node_type: NodeType::Manager,
                 },
             );
-            if let Some((manager_host, manager_port)) =
-                { self.config.read().await.manager_host_port.clone() }
-            {
+            if let Some((manager_host, manager_port)) = {
+                self.config
+                    .read()
+                    .await
+                    .manager_host_and_port()
+                    .map(|(host, port)| (host.clone(), *port))
+            } {
                 self.state = Some(State::without_epoch(nodes));
-                output.push(NodeProtocol::NewConnection {
+                output.push(ManagerProtocol::NewConnection {
                     id: None,
                     host: manager_host,
                     port: manager_port as u32,
@@ -87,27 +91,21 @@ impl ManagerService {
         output
     }
 
-    async fn tick(&mut self, output: &mut Vec<NodeProtocol>) {
+    async fn tick(&mut self, output: &mut Vec<ManagerProtocol>) {
         if let Some(state) = self.state.as_mut() {
             heartbeats(state, output, &self.me);
             start_election_if_needed(state, &mut self.elections, &self.me, output);
-            let replication_factor = {
-                self.config
-                    .read()
-                    .await
-                    .replication_factor
-                    .expect("required and has default")
-            };
+            let replication_factor = { self.config.read().await.replication_factor() };
             worker_partitions(state, output, &self.me, replication_factor);
         }
         tracing::debug!("state: {:?}", self.state);
         tracing::debug!("elections: {:?}", self.elections);
     }
 
-    async fn process(&mut self, msg: NodeProtocol, output: &mut Vec<NodeProtocol>) {
+    async fn process(&mut self, msg: ManagerProtocol, output: &mut Vec<ManagerProtocol>) {
         if let Some(state) = self.state.as_mut() {
             match msg {
-                NodeProtocol::RemoveOldPartition {
+                ManagerProtocol::RemoveOldPartition {
                     id,
                     replica_id,
                     partition_id,
@@ -119,18 +117,20 @@ impl ManagerService {
                     partition_id,
                     &self.me,
                 ),
-                NodeProtocol::NewConnection {
+                ManagerProtocol::NewConnection {
                     id,
                     host,
                     port,
                     manager,
                 } => handle_new_connection(output, state, id, host, port, &self.me, manager),
-                NodeProtocol::Heartbeat {
+                ManagerProtocol::Heartbeat {
                     heartbeat: Heartbeat { id, ts },
                     ..
                 } => handle_heartbeat(output, state, id, ts, &self.me),
-                NodeProtocol::GetClusterState { id } => handle_get_cluster_state(output, state, id),
-                NodeProtocol::ClusterState {
+                ManagerProtocol::GetClusterState { id } => {
+                    handle_get_cluster_state(output, state, id)
+                }
+                ManagerProtocol::ClusterState {
                     state:
                         ClusterState {
                             epoch,
@@ -140,11 +140,11 @@ impl ManagerService {
                         },
                     ..
                 } => handle_cluster_state(output, state, epoch, leader_id, items, partitions),
-                NodeProtocol::VoteRequest { id, epoch, ts } => {
+                ManagerProtocol::VoteRequest { id, epoch, ts } => {
                     tracing::info!("VoteRequest: {:?} {:?}", id, epoch);
                     handle_vote_request(output, state, id, epoch, ts, &mut self.elections);
                 }
-                NodeProtocol::VoteResponse { id, leader_id, ts } => {
+                ManagerProtocol::VoteResponse { id, leader_id, ts } => {
                     tracing::info!("VoteResponse: {:?} {:?}", id, leader_id);
                     handle_vote_response(
                         output,
@@ -156,10 +156,10 @@ impl ManagerService {
                         &mut self.elections,
                     );
                 }
-                NodeProtocol::Leader { id, epoch, ts } => {
+                ManagerProtocol::Leader { id, epoch, ts } => {
                     handle_leader(output, state, id, epoch, ts, &self.me, &mut self.elections);
                 }
-                NodeProtocol::NodeDisconnected { id } => {
+                ManagerProtocol::NodeDisconnected { id } => {
                     handle_node_disconnected(state, id, &self.me);
                 }
             }
@@ -177,7 +177,7 @@ impl ManagerService {
 pub async fn start_service(
     me: Arc<Me>,
     config: Arc<RwLock<Config>>,
-    (tx, mut rx): (Sender<NodeProtocol>, Receiver<NodeProtocol>),
+    (tx, mut rx): (Sender<ManagerProtocol>, Receiver<ManagerProtocol>),
     cancellation_token: CancellationToken,
 ) {
     let mut service = ManagerService::new(me, config);

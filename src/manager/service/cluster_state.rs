@@ -1,10 +1,10 @@
 use super::{Node, State};
 use crate::common::{ClusterNode, ClusterState, Me, NodeId, NodeType, Partition, Partitions};
-use crate::manager::domain::NodeProtocol;
+use crate::manager::domain::ManagerProtocol;
 use std::collections::HashMap;
 
 pub(super) fn handle_cluster_state(
-    output: &mut Vec<NodeProtocol>,
+    output: &mut Vec<ManagerProtocol>,
     state: &mut State,
     epoch: u64,
     leader_id: NodeId,
@@ -43,7 +43,7 @@ pub(super) fn handle_cluster_state(
                         }
                     } else {
                         match node_type {
-                            NodeType::Manager => output.push(NodeProtocol::NewConnection {
+                            NodeType::Manager => output.push(ManagerProtocol::NewConnection {
                                 id: None,
                                 host,
                                 port,
@@ -69,12 +69,12 @@ pub(super) fn handle_cluster_state(
 }
 
 pub(super) fn handle_get_cluster_state(
-    output: &mut Vec<NodeProtocol>,
+    output: &mut Vec<ManagerProtocol>,
     state: &mut State,
     id: NodeId,
 ) {
     if let Some((epoch, leader_id)) = state.epoch.zip(state.elected_leader_id.clone()) {
-        output.push(NodeProtocol::ClusterState {
+        output.push(ManagerProtocol::ClusterState {
             recipient_id: id.clone(),
             state: ClusterState {
                 epoch,
@@ -127,7 +127,7 @@ fn state_partition_mapping_to_domain(
 }
 
 pub(super) fn handle_remove_old_partition(
-    output: &mut Vec<NodeProtocol>,
+    output: &mut Vec<ManagerProtocol>,
     state: &mut State,
     id: NodeId,
     replica_id: NodeId,
@@ -151,7 +151,7 @@ pub(super) fn handle_remove_old_partition(
             .keys()
             .filter(|key| *key != &replica_id && *key != &id && *key != &me.id)
         {
-            output.push(NodeProtocol::RemoveOldPartition {
+            output.push(ManagerProtocol::RemoveOldPartition {
                 id: recipient_id.clone(),
                 replica_id: replica_id.clone(),
                 partition_id,

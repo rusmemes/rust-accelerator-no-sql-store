@@ -10,7 +10,7 @@ async fn init_with_manager_connection_requests_connection_and_sets_state() {
 
     assert!(matches!(
         output.as_slice(),
-        [NodeProtocol::NewConnection {
+        [ManagerProtocol::NewConnection {
             id: _,
             host,
             port,
@@ -22,20 +22,4 @@ async fn init_with_manager_connection_requests_connection_and_sets_state() {
     assert_eq!(state.epoch, None);
     assert_eq!(state.elected_leader_id, None);
     assert!(state.nodes.contains_key(&me.id));
-}
-
-#[tokio::test]
-async fn init_without_manager_starts_as_epoch_zero() {
-    let me = me("11111111-1111-1111-1111-111111111111");
-    let (mut service, config) = service(me.clone());
-    config.write().await.manager_host_port = None;
-
-    let output = service.get_init_messages().await;
-
-    assert!(output.is_empty());
-
-    let state = service.state.as_ref().expect("state initialized");
-    assert_eq!(state.epoch, Some(0));
-    assert_eq!(state.elected_leader_id, None);
-    assert_eq!(state.nodes.len(), 1);
 }

@@ -241,6 +241,6 @@ async fn output_removes_closed_manager_session() {
     assert!(!manager_sessions.read().await.contains_key(&manager_id));
     assert!(matches!(
         rx.recv().await.expect("protocol message"),
-        NodeProtocol::NodeDisconnected { id } if id == manager_id
+        ManagerProtocol::NodeDisconnected { id } if id == manager_id
     ));
 }

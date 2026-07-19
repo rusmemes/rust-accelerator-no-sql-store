@@ -3,8 +3,6 @@ use crate::common::{Config, Me, NodeId, NodeType};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-pub(super) const TEST_PARTITIONS_AMOUNT: usize = 4096;
-
 pub(super) fn node_id(id: &str) -> NodeId {
     NodeId::from_string(id)
 }
@@ -18,11 +16,11 @@ pub(super) fn me(id: &str) -> Arc<Me> {
 }
 
 pub(super) fn shared_config(manager_host_port: Option<(String, u16)>) -> Arc<RwLock<Config>> {
-    Arc::new(RwLock::new(Config {
+    Arc::new(RwLock::new(Config::Manager {
         grpc_port: 8080,
         self_host_port: ("127.0.0.1".to_string(), 7000),
         manager_host_port,
-        replication_factor: Some(3),
+        replication_factor: 3,
     }))
 }
 

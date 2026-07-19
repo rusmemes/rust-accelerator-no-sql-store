@@ -1,10 +1,10 @@
 use super::{get_random_number, Node, State};
 use crate::common::{now_millis, Heartbeat, Me, NodeId, NodeType};
-use crate::manager::domain::NodeProtocol;
+use crate::manager::domain::ManagerProtocol;
 
 const HEARTBEAT_INTERVAL_MS: u64 = 200;
 
-pub(super) fn heartbeats(state: &mut State, output: &mut Vec<NodeProtocol>, me: &Me) {
+pub(super) fn heartbeats(state: &mut State, output: &mut Vec<ManagerProtocol>, me: &Me) {
     if let Some(Node {
         node_type: NodeType::Manager,
         last_heartbeat,
@@ -19,7 +19,7 @@ pub(super) fn heartbeats(state: &mut State, output: &mut Vec<NodeProtocol>, me: 
                     .nodes
                     .keys()
                     .filter(|key| **key != me.id)
-                    .map(|key| NodeProtocol::Heartbeat {
+                    .map(|key| ManagerProtocol::Heartbeat {
                         recipient_id: key.clone(),
                         heartbeat: Heartbeat {
                             id: me.id.clone(),
@@ -47,7 +47,7 @@ pub(super) fn heartbeats(state: &mut State, output: &mut Vec<NodeProtocol>, me: 
 }
 
 pub(super) fn handle_heartbeat(
-    output: &mut Vec<NodeProtocol>,
+    output: &mut Vec<ManagerProtocol>,
     state: &mut State,
     id: NodeId,
     ts: u64,
@@ -60,7 +60,7 @@ pub(super) fn handle_heartbeat(
                     .nodes
                     .iter()
                     .filter(|(key, node)| *key != &me.id && node.is_manager())
-                    .map(|(key, _)| NodeProtocol::GetClusterState { id: key.clone() }),
+                    .map(|(key, _)| ManagerProtocol::GetClusterState { id: key.clone() }),
             );
         }
         Some(node) => {
@@ -71,7 +71,7 @@ pub(super) fn handle_heartbeat(
                         .nodes
                         .keys()
                         .filter(|key| *key != &id && *key != &me.id)
-                        .map(|key| NodeProtocol::Heartbeat {
+                        .map(|key| ManagerProtocol::Heartbeat {
                             recipient_id: key.clone(),
                             heartbeat: Heartbeat { id: id.clone(), ts },
                         }),

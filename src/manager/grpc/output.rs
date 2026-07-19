@@ -1,24 +1,20 @@
+use crate::common::Config;
 use crate::{
     common::{ClusterNode, ClusterState, Heartbeat, Me, NodeId, Partitions},
     manager::{
-        domain::NodeProtocol,
+        domain::ManagerProtocol,
         grpc::{
             api::v1::{
-                manager_event::Payload,
-                worker_event,
-                Heartbeat as GrpcHeartbeat,
-                Leader as GrpcLeader,
-                ManagerEvent,
-                RemovePartitionFromReplica,
-                VoteRequest as GrpcVoteRequest,
-                VoteResponse as GrpcVoteResponse,
-                WorkerEvent
+                manager_event::Payload, worker_event, Heartbeat as GrpcHeartbeat,
+                Leader as GrpcLeader, ManagerEvent,
+                RemovePartitionFromReplica, VoteRequest as GrpcVoteRequest, VoteResponse as GrpcVoteResponse,
+                WorkerEvent,
             },
             common::v1::{Addr, ClusterState as GrpcClusterState, GetState, Node},
             conversions::{domain_node_type_to_grpc, domain_partitions_to_grpc},
-            session::{handle_common, ManagerIOStream, WorkerIOStream}
+            session::{handle_common, ManagerIOStream, WorkerIOStream},
         },
-    }
+    },
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -27,16 +23,16 @@ use tokio::sync::RwLock;
 
 pub(super) async fn output(
     me: Arc<Me>,
-    tx: Sender<NodeProtocol>,
-    mut rx: Receiver<NodeProtocol>,
+    tx: Sender<ManagerProtocol>,
+    mut rx: Receiver<ManagerProtocol>,
     manager_sessions: Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
     worker_sessions: Arc<RwLock<HashMap<NodeId, WorkerIOStream>>>,
-    config: Arc<RwLock<crate::common::Config>>,
+    config: Arc<RwLock<Config>>,
 ) {
     while let Some(message) = rx.recv().await {
         tracing::debug!("output: {:?}", message);
         match message {
-            NodeProtocol::RemoveOldPartition {
+            ManagerProtocol::RemoveOldPartition {
                 id,
                 replica_id,
                 partition_id,
@@ -51,26 +47,20 @@ pub(super) async fn output(
                 )
                 .await;
             }
-            NodeProtocol::Heartbeat {
+            ManagerProtocol::Heartbeat {
                 recipient_id: id,
                 heartbeat: Heartbeat { id: node_id, ts },
             } => {
                 handle_output_heartbeat(&tx, &manager_sessions, &worker_sessions, id, node_id, ts)
                     .await;
             }
-            NodeProtocol::NewConnection {
+            ManagerProtocol::NewConnection {
                 id: _,
                 host,
                 port,
                 manager,
             } => {
-                let replication_factor = {
-                    config
-                        .read()
-                        .await
-                        .replication_factor
-                        .expect("Partitions and replication factor should be defined")
-                };
+                let replication_factor = { config.read().await.replication_factor() };
                 if manager {
                     super::new_manager_connection(
                         &me,
@@ -85,10 +75,10 @@ pub(super) async fn output(
                     tracing::error!("NewConnection is not expected to be received for worker");
                 }
             }
-            NodeProtocol::GetClusterState { id } => {
+            ManagerProtocol::GetClusterState { id } => {
                 handle_output_get_cluster_state(&tx, &manager_sessions, id).await;
             }
-            NodeProtocol::ClusterState {
+            ManagerProtocol::ClusterState {
                 recipient_id,
                 state:
                     ClusterState {
@@ -110,17 +100,17 @@ pub(super) async fn output(
                 )
                 .await;
             }
-            NodeProtocol::VoteRequest { id, epoch, ts } => {
+            ManagerProtocol::VoteRequest { id, epoch, ts } => {
                 handle_output_vote_request(&tx, &manager_sessions, id, epoch, ts).await;
             }
-            NodeProtocol::VoteResponse { id, leader_id, ts } => {
+            ManagerProtocol::VoteResponse { id, leader_id, ts } => {
                 handle_output_vote_response(&tx, &manager_sessions, id, leader_id, ts).await;
             }
-            NodeProtocol::Leader { id, epoch, ts } => {
+            ManagerProtocol::Leader { id, epoch, ts } => {
                 handle_output_leader(&me, &tx, &manager_sessions, &worker_sessions, id, epoch, ts)
                     .await;
             }
-            NodeProtocol::NodeDisconnected { .. } => {
+            ManagerProtocol::NodeDisconnected { .. } => {
                 unreachable!("NodeDisconnected is not expected to be sent");
             }
         }
@@ -129,7 +119,7 @@ pub(super) async fn output(
 
 pub(super) async fn handle_output_leader(
     me: &Me,
-    tx: &Sender<NodeProtocol>,
+    tx: &Sender<ManagerProtocol>,
     manager_sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
     worker_sessions: &RwLock<HashMap<NodeId, WorkerIOStream>>,
     id: NodeId,
@@ -169,7 +159,7 @@ pub(super) async fn handle_output_leader(
 }
 
 pub(super) async fn handle_output_vote_response(
-    tx: &Sender<NodeProtocol>,
+    tx: &Sender<ManagerProtocol>,
     sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
     id: NodeId,
     leader_id: NodeId,
@@ -191,7 +181,7 @@ pub(super) async fn handle_output_vote_response(
 }
 
 pub(super) async fn handle_output_vote_request(
-    tx: &Sender<NodeProtocol>,
+    tx: &Sender<ManagerProtocol>,
     sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
     id: NodeId,
     epoch: u64,
@@ -210,7 +200,7 @@ pub(super) async fn handle_output_vote_request(
 }
 
 pub(super) async fn handle_output_cluster_state(
-    tx: &Sender<NodeProtocol>,
+    tx: &Sender<ManagerProtocol>,
     manager_sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
     worker_sessions: &RwLock<HashMap<NodeId, WorkerIOStream>>,
     id: NodeId,
@@ -269,7 +259,7 @@ pub(super) async fn handle_output_cluster_state(
 }
 
 pub(super) async fn handle_output_get_cluster_state(
-    tx: &Sender<NodeProtocol>,
+    tx: &Sender<ManagerProtocol>,
     sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
     id: NodeId,
 ) {
@@ -286,7 +276,7 @@ pub(super) async fn handle_output_get_cluster_state(
 }
 
 pub(super) async fn handle_output_heartbeat(
-    tx: &Sender<NodeProtocol>,
+    tx: &Sender<ManagerProtocol>,
     manager_sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
     worker_sessions: &RwLock<HashMap<NodeId, WorkerIOStream>>,
     id: NodeId,
@@ -325,7 +315,7 @@ pub(super) async fn handle_output_heartbeat(
 }
 
 pub(super) async fn handle_output_remove_old_partition(
-    tx: &Sender<NodeProtocol>,
+    tx: &Sender<ManagerProtocol>,
     manager_sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
     worker_sessions: &RwLock<HashMap<NodeId, WorkerIOStream>>,
     recipient_id: NodeId,

@@ -1,5 +1,5 @@
 use crate::common::{Me, NodeId};
-use crate::manager::domain::NodeProtocol;
+use crate::manager::domain::ManagerProtocol;
 use crate::manager::grpc::api::v1::manager_api_client::ManagerApiClient;
 use crate::manager::grpc::api::v1::manager_event::Payload;
 use crate::manager::grpc::api::v1::{Config, Connect, ConnectResponse, ManagerEvent};
@@ -16,7 +16,7 @@ use tonic::{Request, Response, Streaming};
 
 pub(super) async fn new_manager_connection(
     me: &Arc<Me>,
-    tx: &Sender<NodeProtocol>,
+    tx: &Sender<ManagerProtocol>,
     sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
     host: String,
     port: u32,
@@ -59,7 +59,7 @@ pub(super) async fn new_manager_connection(
 
 async fn start_communication_with_manager(
     me: &Arc<Me>,
-    tx: &Sender<NodeProtocol>,
+    tx: &Sender<ManagerProtocol>,
     sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
     host: String,
     port: u32,
@@ -100,7 +100,7 @@ async fn start_communication_with_manager(
                 input_from_manager(me, input_stream, &id, host, port, tx.clone()).await;
                 sessions.write().await.remove(&id);
                 tracing::info!("Node {} is disconnected", id);
-                let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
+                let _ = tx.send(ManagerProtocol::NodeDisconnected { id }).await;
             });
         } else {
             tracing::error!("Node {}:{} is not connected ", host, port);

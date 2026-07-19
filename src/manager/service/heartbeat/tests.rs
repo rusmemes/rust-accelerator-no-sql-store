@@ -1,6 +1,6 @@
 use super::*;
 use crate::common::now_millis;
-use crate::manager::domain::NodeProtocol;
+use crate::manager::domain::ManagerProtocol;
 use crate::manager::service::test_support::*;
 use crate::manager::service::State;
 use std::collections::HashMap;
@@ -25,7 +25,7 @@ async fn heartbeat_from_unknown_node_requests_cluster_state_from_peers() {
     let mut output = vec![];
     service
         .process(
-            NodeProtocol::Heartbeat {
+            ManagerProtocol::Heartbeat {
                 recipient_id: me.id.clone(),
                 heartbeat: Heartbeat {
                     id: node_id("33333333-3333-3333-3333-333333333333"),
@@ -38,7 +38,7 @@ async fn heartbeat_from_unknown_node_requests_cluster_state_from_peers() {
 
     assert!(matches!(
         output.as_slice(),
-        [NodeProtocol::GetClusterState { id }] if id == &peer_id
+        [ManagerProtocol::GetClusterState { id }] if id == &peer_id
     ));
 }
 
@@ -72,7 +72,7 @@ async fn heartbeat_from_known_peer_is_forwarded_only_when_we_are_leader() {
 
     assert!(matches!(
         forwarded.as_slice(),
-        [NodeProtocol::Heartbeat { recipient_id, heartbeat }]
+        [ManagerProtocol::Heartbeat { recipient_id, heartbeat }]
             if recipient_id == &peer_two
                 && heartbeat.id == peer_one
                 && heartbeat.ts == 42
@@ -132,7 +132,7 @@ async fn heartbeat_from_worker_updates_worker_without_forwarding() {
 
     assert!(matches!(
         output.as_slice(),
-        [NodeProtocol::Heartbeat { recipient_id, heartbeat }]
+        [ManagerProtocol::Heartbeat { recipient_id, heartbeat }]
             if recipient_id == &manager_peer && heartbeat.id == worker && heartbeat.ts == 44
     ));
     assert_eq!(
@@ -170,7 +170,7 @@ async fn tick_emits_heartbeats_for_stale_self_heartbeat() {
 
     assert!(matches!(
         output.as_slice(),
-        [NodeProtocol::Heartbeat { recipient_id, heartbeat }] if recipient_id == &peer_id
+        [ManagerProtocol::Heartbeat { recipient_id, heartbeat }] if recipient_id == &peer_id
             && heartbeat.id == me.id
     ));
 }

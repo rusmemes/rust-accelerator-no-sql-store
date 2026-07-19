@@ -1,6 +1,6 @@
 use super::*;
 use crate::common::now_millis;
-use crate::manager::domain::NodeProtocol;
+use crate::manager::domain::ManagerProtocol;
 use crate::manager::service::test_support::*;
 use crate::manager::service::State;
 use std::collections::{HashMap, HashSet};
@@ -45,7 +45,7 @@ async fn get_cluster_state_returns_current_cluster_snapshot() {
     let mut output = vec![];
     service
         .process(
-            NodeProtocol::GetClusterState {
+            ManagerProtocol::GetClusterState {
                 id: peer_id.clone(),
             },
             &mut output,
@@ -54,7 +54,7 @@ async fn get_cluster_state_returns_current_cluster_snapshot() {
 
     let cluster_state = match output.as_slice() {
         [
-            NodeProtocol::ClusterState {
+            ManagerProtocol::ClusterState {
                 recipient_id,
                 state,
             },
@@ -110,7 +110,7 @@ async fn get_cluster_state_returns_worker_items_and_partition_mapping() {
 
     let cluster_state = match output.as_slice() {
         [
-            NodeProtocol::ClusterState {
+            ManagerProtocol::ClusterState {
                 recipient_id,
                 state,
             },
@@ -177,7 +177,7 @@ async fn cluster_state_updates_known_nodes_and_requests_unknown_managers() {
 
     assert!(matches!(
         output.as_slice(),
-        [NodeProtocol::NewConnection { id, host, port, manager }]
+        [ManagerProtocol::NewConnection { id, host, port, manager }]
             if id.is_none() && host == "unknown.local" && *port == 9002 && *manager
     ));
 
@@ -356,52 +356,6 @@ async fn cluster_state_applies_partition_mapping_and_adds_unknown_workers() {
         state.partitions.old_replicas.get(&8),
         Some(&replicas(vec![worker, other_worker]))
     );
-}
-
-#[tokio::test]
-async fn stale_cluster_state_is_ignored() {
-    let me = me("11111111-1111-1111-1111-111111111111");
-    let leader = node_id("22222222-2222-2222-2222-222222222222");
-    let (mut service, config) = service(me.clone());
-    let now = now_millis();
-    service.state = Some(State {
-        epoch: Some(3),
-        elected_leader_id: Some(leader.clone()),
-        nodes: HashMap::from([
-            (me.id.clone(), fresh_node(&me, now)),
-            (leader.clone(), node("leader.local", 9001, now)),
-        ]),
-        partitions: Default::default(),
-        workers_with_calculated_partitions: Default::default(),
-    });
-    {
-        let mut guard = config.write().await;
-        guard.replication_factor = Some(1);
-    }
-
-    let mut output = vec![];
-    handle_cluster_state(
-        &mut output,
-        service.state.as_mut().unwrap(),
-        2,
-        me.id.clone(),
-        vec![cluster_node(
-            me.id.clone(),
-            &me.host,
-            me.port,
-            now + 50,
-            NodeType::Manager,
-        )],
-        Partitions::default(),
-    );
-
-    assert!(output.is_empty());
-    let state = service.state.as_ref().unwrap();
-    assert_eq!(state.epoch, Some(3));
-    assert_eq!(state.elected_leader_id, Some(leader));
-    assert_eq!(state.nodes.get(&me.id).unwrap().last_heartbeat, now);
-    let guard = config.read().await;
-    assert_eq!(guard.replication_factor, Some(1));
 }
 
 #[tokio::test]

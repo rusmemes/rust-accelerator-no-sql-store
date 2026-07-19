@@ -2,7 +2,7 @@ use crate::manager::grpc::api::v1::{worker_event, Config};
 use crate::{
     common::{Me, NodeId},
     manager::{
-        domain::NodeProtocol,
+        domain::ManagerProtocol,
         grpc::{
             api::v1::{
                 manager_api_server::{ManagerApi, ManagerApiServer}, manager_event::Payload, Connect, ConnectResponse,
@@ -54,12 +54,12 @@ pub struct ManagerApiService {
     me: Arc<Me>,
     manager_sessions: Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
     worker_sessions: Arc<RwLock<HashMap<NodeId, WorkerIOStream>>>,
-    tx: Sender<NodeProtocol>,
+    tx: Sender<ManagerProtocol>,
     config: Arc<RwLock<crate::common::Config>>,
 }
 impl ManagerApiService {
     pub fn new(
-        (tx, rx): (Sender<NodeProtocol>, Receiver<NodeProtocol>),
+        (tx, rx): (Sender<ManagerProtocol>, Receiver<ManagerProtocol>),
         me: Arc<Me>,
         config: Arc<RwLock<crate::common::Config>>,
     ) -> Self {
@@ -118,7 +118,7 @@ impl ManagerApi for ManagerApiService {
             {
                 {
                     let mut guard = config.write().await;
-                    guard.replication_factor = Some(replication_factor as usize);
+                    *guard.replication_factor_mut() = replication_factor as usize;
                 }
 
                 let id: NodeId = id.into();
@@ -141,7 +141,7 @@ impl ManagerApi for ManagerApiService {
                     }
                     manager_sessions.write().await.remove(&id);
                     tracing::info!("Node {} is disconnected", id);
-                    let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
+                    let _ = tx.send(ManagerProtocol::NodeDisconnected { id }).await;
                 });
             } else {
                 tracing::error!("Failed to read Connect message from {:?}", remote_addr);
@@ -202,7 +202,7 @@ impl ManagerApi for ManagerApiService {
                     }
                     worker_sessions.write().await.remove(&id);
                     tracing::info!("Node {} is disconnected", id);
-                    let _ = tx.send(NodeProtocol::NodeDisconnected { id }).await;
+                    let _ = tx.send(ManagerProtocol::NodeDisconnected { id }).await;
                 });
             } else {
                 tracing::error!("Failed to read Connect message from {:?}", remote_addr);
@@ -224,10 +224,10 @@ pub enum GrpcServerError {
 pub async fn start_server(
     config: Arc<RwLock<crate::common::Config>>,
     me: Arc<Me>,
-    channel: (Sender<NodeProtocol>, Receiver<NodeProtocol>),
+    channel: (Sender<ManagerProtocol>, Receiver<ManagerProtocol>),
     cancellation_token: CancellationToken,
 ) -> Result<(), GrpcServerError> {
-    let grpc_port = { config.read().await.grpc_port };
+    let grpc_port = { config.read().await.grpc_port() };
     let grpc_address = format!("127.0.0.1:{grpc_port}").as_str().parse()?;
 
     tracing::info!("GRPC Server is starting at {}", grpc_address);
