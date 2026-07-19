@@ -1,13 +1,25 @@
-use crate::common::{Me, NodeId};
-use crate::manager::domain::{self, ClusterNode, NodeProtocol};
-use crate::manager::grpc::api::v1::manager_event::Payload;
-use crate::manager::grpc::api::v1::{worker_event, RemovePartitionFromReplica};
-use crate::manager::grpc::api::v1::{
-    Heartbeat, Leader, ManagerEvent, VoteRequest, VoteResponse, WorkerEvent,
+use crate::{
+    common::{ClusterNode, ClusterState, Heartbeat, Me, NodeId, Partitions},
+    manager::{
+        domain::NodeProtocol,
+        grpc::{
+            api::v1::{
+                manager_event::Payload,
+                worker_event,
+                Heartbeat as GrpcHeartbeat,
+                Leader as GrpcLeader,
+                ManagerEvent,
+                RemovePartitionFromReplica,
+                VoteRequest as GrpcVoteRequest,
+                VoteResponse as GrpcVoteResponse,
+                WorkerEvent
+            },
+            common::v1::{Addr, ClusterState as GrpcClusterState, GetState, Node},
+            conversions::{domain_node_type_to_grpc, domain_partitions_to_grpc},
+            session::{handle_common, ManagerIOStream, WorkerIOStream}
+        },
+    }
 };
-use crate::manager::grpc::common::v1::{Addr, ClusterState, GetState, Node};
-use crate::manager::grpc::conversions::{domain_node_type_to_grpc, domain_partitions_to_grpc};
-use crate::manager::grpc::session::{handle_common, ManagerIOStream, WorkerIOStream};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -41,7 +53,7 @@ pub(super) async fn output(
             }
             NodeProtocol::Heartbeat {
                 recipient_id: id,
-                heartbeat: domain::Heartbeat { id: node_id, ts },
+                heartbeat: Heartbeat { id: node_id, ts },
             } => {
                 handle_output_heartbeat(&tx, &manager_sessions, &worker_sessions, id, node_id, ts)
                     .await;
@@ -79,7 +91,7 @@ pub(super) async fn output(
             NodeProtocol::ClusterState {
                 recipient_id,
                 state:
-                    domain::ClusterState {
+                    ClusterState {
                         epoch,
                         leader_id,
                         items,
@@ -125,7 +137,7 @@ pub(super) async fn handle_output_leader(
     ts: u64,
 ) {
     // only leader node can send it
-    let leader = || Leader {
+    let leader = || GrpcLeader {
         id: me.id.to_string(),
         epoch,
         ts,
@@ -166,7 +178,7 @@ pub(super) async fn handle_output_vote_response(
     handle_common(
         "VoteResponse",
         || ManagerEvent {
-            payload: Some(Payload::VoteResponse(VoteResponse {
+            payload: Some(Payload::VoteResponse(GrpcVoteResponse {
                 leader_id: leader_id.to_string(),
                 ts,
             })),
@@ -188,7 +200,7 @@ pub(super) async fn handle_output_vote_request(
     handle_common(
         "VoteRequest",
         || ManagerEvent {
-            payload: Some(Payload::VoteRequest(VoteRequest { epoch, ts })),
+            payload: Some(Payload::VoteRequest(GrpcVoteRequest { epoch, ts })),
         },
         tx,
         sessions,
@@ -205,9 +217,9 @@ pub(super) async fn handle_output_cluster_state(
     epoch: u64,
     leader_id: NodeId,
     items: Vec<ClusterNode>,
-    partitions: domain::Partitions,
+    partitions: Partitions,
 ) {
-    let state = || ClusterState {
+    let state = || GrpcClusterState {
         epoch,
         leader_id: leader_id.to_string(),
         nodes: items
@@ -281,7 +293,7 @@ pub(super) async fn handle_output_heartbeat(
     node_id: NodeId,
     ts: u64,
 ) {
-    let heartbeat = || Heartbeat {
+    let heartbeat = || GrpcHeartbeat {
         id: node_id.to_string(),
         ts,
     };

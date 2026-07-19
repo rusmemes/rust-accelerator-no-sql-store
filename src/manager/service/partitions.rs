@@ -1,8 +1,6 @@
-use super::{state, State};
-use crate::common::{Me, NodeId};
-use crate::manager::domain;
-use crate::manager::domain::{ClusterState, NodeProtocol, Partitions};
-use crate::manager::service::state::Partition;
+use super::State;
+use crate::common::{ClusterState, Me, NodeId, Partition, Partitions};
+use crate::manager::domain::NodeProtocol;
 use std::collections::{BTreeSet, HashSet};
 
 const PARTITIONS_AMOUNT: usize = 4096;
@@ -56,7 +54,7 @@ pub(super) fn worker_partitions(
     }
 }
 
-fn deduplicate_partitions(partitions: &mut state::Partitions) {
+fn deduplicate_partitions(partitions: &mut Partitions) {
     partitions.old_replicas.retain(|partition, old_replicas| {
         if let Some(new_mapping) = partitions.mapping.get(partition) {
             old_replicas.retain(|replica| {
@@ -85,7 +83,7 @@ fn create_new_workers_state(state: &mut State) -> ClusterState {
                 .map(|(id, partition)| {
                     (
                         *id,
-                        domain::Partition {
+                        Partition {
                             master: partition.master.clone(),
                             replicas: partition.replicas.clone(),
                         },

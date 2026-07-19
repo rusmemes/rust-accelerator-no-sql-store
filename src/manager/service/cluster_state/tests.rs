@@ -1,12 +1,12 @@
 use super::*;
 use crate::common::now_millis;
-use crate::manager::domain::{ClusterNode, NodeProtocol, NodeType, Partition, Partitions};
+use crate::manager::domain::NodeProtocol;
 use crate::manager::service::test_support::*;
 use crate::manager::service::State;
 use std::collections::{HashMap, HashSet};
 
 fn cluster_node(
-    id: crate::common::NodeId,
+    id: NodeId,
     host: &str,
     port: u32,
     last_heartbeat: u64,
@@ -21,7 +21,7 @@ fn cluster_node(
     }
 }
 
-fn replicas(replicas: Vec<crate::common::NodeId>) -> HashSet<crate::common::NodeId> {
+fn replicas(replicas: Vec<NodeId>) -> HashSet<NodeId> {
     replicas.into_iter().collect()
 }
 
@@ -88,10 +88,10 @@ async fn get_cluster_state_returns_worker_items_and_partition_mapping() {
                 worker_node("worker.local", 9100, now - 5),
             ),
         ]),
-        partitions: crate::manager::service::state::Partitions {
+        partitions: Partitions {
             mapping: HashMap::from([(
                 7,
-                crate::manager::service::state::Partition {
+                Partition {
                     master: worker_id.clone(),
                     replicas: replicas(vec![me.id.clone()]),
                 },

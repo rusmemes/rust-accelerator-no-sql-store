@@ -1,4 +1,5 @@
 use crate::cli::{Cli, Command};
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Hash, Debug)]
@@ -32,6 +33,65 @@ impl std::fmt::Display for NodeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeType {
+    Manager,
+    Worker,
+}
+
+#[derive(Debug)]
+pub struct Node {
+    pub host: String,
+    pub port: u32,
+    pub last_heartbeat: u64,
+    pub node_type: NodeType,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Partitions {
+    pub mapping: HashMap<u16, Partition>,
+    pub old_replicas: HashMap<u16, HashSet<NodeId>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Partition {
+    pub master: NodeId,
+    pub replicas: HashSet<NodeId>,
+}
+
+impl Node {
+    pub fn is_manager(&self) -> bool {
+        matches!(self.node_type, NodeType::Manager)
+    }
+
+    pub fn is_worker(&self) -> bool {
+        matches!(self.node_type, NodeType::Worker)
+    }
+}
+
+#[derive(Debug)]
+pub struct Heartbeat {
+    pub id: NodeId,
+    pub ts: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClusterNode {
+    pub id: NodeId,
+    pub host: String,
+    pub port: u32,
+    pub last_heartbeat: u64,
+    pub node_type: NodeType,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClusterState {
+    pub epoch: u64,
+    pub leader_id: NodeId,
+    pub items: Vec<ClusterNode>,
+    pub partitions: Partitions,
 }
 
 #[derive(Debug)]

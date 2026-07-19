@@ -1,6 +1,6 @@
 use super::*;
 use crate::common::now_millis;
-use crate::manager::domain::{Heartbeat, NodeProtocol};
+use crate::manager::domain::NodeProtocol;
 use crate::manager::service::test_support::*;
 use crate::manager::service::State;
 use std::collections::HashMap;

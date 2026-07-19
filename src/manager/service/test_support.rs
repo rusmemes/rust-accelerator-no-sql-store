@@ -1,6 +1,5 @@
 use super::{ManagerService, Node};
-use crate::common::{Config, Me, NodeId};
-use crate::manager::domain::NodeType;
+use crate::common::{Config, Me, NodeId, NodeType};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 

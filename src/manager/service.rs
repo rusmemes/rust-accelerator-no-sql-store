@@ -1,5 +1,5 @@
-use crate::common::{now_millis, Config, Me};
-use crate::manager::domain::{ClusterState, Heartbeat, NodeProtocol, NodeType};
+use crate::common::{now_millis, ClusterState, Config, Heartbeat, Me, Node, NodeType};
+use crate::manager::domain::NodeProtocol;
 use cluster_state::{handle_cluster_state, handle_get_cluster_state};
 use connection::{handle_new_connection, handle_node_disconnected};
 use election::{
@@ -29,8 +29,7 @@ mod partitions;
 mod state;
 
 use crate::manager::service::cluster_state::handle_remove_old_partition;
-use crate::manager::service::state::Partitions;
-use state::{Node, State};
+use state::State;
 
 // to make nodes trying to start elections at different times, we randomize the election timeout interval
 // so that the elections are not all started at the same time
@@ -56,6 +55,36 @@ impl ManagerService {
             elections: Default::default(),
             config,
         }
+    }
+
+    async fn get_init_messages(&mut self) -> Vec<NodeProtocol> {
+        let mut output = vec![];
+        if let None = self.state {
+            let mut nodes = HashMap::new();
+            nodes.insert(
+                self.me.id.clone(),
+                Node {
+                    host: self.me.host.clone(),
+                    port: self.me.port,
+                    last_heartbeat: now_millis(),
+                    node_type: NodeType::Manager,
+                },
+            );
+            if let Some((manager_host, manager_port)) =
+                { self.config.read().await.manager_host_port.clone() }
+            {
+                self.state = Some(State::without_epoch(nodes));
+                output.push(NodeProtocol::NewConnection {
+                    id: None,
+                    host: manager_host,
+                    port: manager_port as u32,
+                    manager: true,
+                });
+            } else {
+                self.state = Some(State::with_epoch(nodes, 0));
+            }
+        }
+        output
     }
 
     async fn tick(&mut self, output: &mut Vec<NodeProtocol>) {
@@ -137,57 +166,6 @@ impl ManagerService {
         }
 
         self.tick(output).await
-    }
-
-    async fn get_init_messages(&mut self) -> Vec<NodeProtocol> {
-        let manager_host_port = { self.config.read().await.manager_host_port.clone() };
-
-        if self.state.is_some() {
-            vec![]
-        } else if let Some((manager_host, manager_port)) = manager_host_port {
-            let mut nodes = HashMap::new();
-            nodes.insert(
-                self.me.id.clone(),
-                Node {
-                    host: self.me.host.clone(),
-                    port: self.me.port,
-                    last_heartbeat: now_millis(),
-                    node_type: NodeType::Manager,
-                },
-            );
-            self.state = Some(State {
-                epoch: None,
-                elected_leader_id: None,
-                nodes,
-                partitions: Partitions::default(),
-                workers_with_calculated_partitions: Default::default(),
-            });
-            vec![NodeProtocol::NewConnection {
-                id: None,
-                host: manager_host,
-                port: manager_port as u32,
-                manager: true,
-            }]
-        } else {
-            let mut nodes = HashMap::new();
-            nodes.insert(
-                self.me.id.clone(),
-                Node {
-                    host: self.me.host.clone(),
-                    port: self.me.port,
-                    last_heartbeat: now_millis(),
-                    node_type: NodeType::Manager,
-                },
-            );
-            self.state = Some(State {
-                epoch: Some(0),
-                elected_leader_id: None,
-                nodes,
-                partitions: Partitions::default(),
-                workers_with_calculated_partitions: Default::default(),
-            });
-            vec![]
-        }
     }
 }
 
