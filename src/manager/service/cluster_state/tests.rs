@@ -379,3 +379,44 @@ async fn get_cluster_state_is_ignored_until_the_cluster_is_known() {
 
     assert!(output.is_empty());
 }
+
+#[tokio::test]
+async fn stale_cluster_state_is_ignored() {
+    let me = me("11111111-1111-1111-1111-111111111111");
+    let leader = node_id("22222222-2222-2222-2222-222222222222");
+    let (mut service, _config) = service(me.clone());
+    let now = now_millis();
+
+    service.state = Some(State {
+        epoch: Some(3),
+        elected_leader_id: Some(leader.clone()),
+        nodes: HashMap::from([
+            (me.id.clone(), fresh_node(&me, now)),
+            (leader.clone(), node("leader.local", 9001, now)),
+        ]),
+        partitions: Default::default(),
+        workers_with_calculated_partitions: Default::default(),
+    });
+
+    let mut output = vec![];
+    handle_cluster_state(
+        &mut output,
+        service.state.as_mut().unwrap(),
+        2,
+        me.id.clone(),
+        vec![cluster_node(
+            me.id.clone(),
+            &me.host,
+            me.port,
+            now + 50,
+            NodeType::Manager,
+        )],
+        Partitions::default(),
+    );
+
+    assert!(output.is_empty());
+    let state = service.state.as_ref().unwrap();
+    assert_eq!(state.epoch, Some(3));
+    assert_eq!(state.elected_leader_id, Some(leader));
+    assert_eq!(state.nodes.get(&me.id).unwrap().last_heartbeat, now);
+}

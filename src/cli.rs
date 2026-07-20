@@ -139,4 +139,61 @@ mod tests {
         ]);
         assert!(res.is_err());
     }
+
+    #[test]
+    fn manager_replication_factor_defaults_to_3() {
+        let cli = Cli::try_parse_from([
+            "bin",
+            "manager",
+            "--grpc-port",
+            "5000",
+            "--self-host",
+            "127.0.0.1",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Command::Manager {
+                replication_factor, ..
+            } => assert_eq!(replication_factor, 3),
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn manager_replication_factor_is_validated_by_clap_value_parser() {
+        let res = Cli::try_parse_from([
+            "bin",
+            "manager",
+            "--grpc-port",
+            "5000",
+            "--self-host",
+            "127.0.0.1",
+            "--replication-factor",
+            "0",
+        ]);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn parsed_common_args_self_port_defaults_to_grpc_port() {
+        let cli = Cli::try_parse_from([
+            "bin",
+            "worker",
+            "--grpc-port",
+            "5001",
+            "--self-host",
+            "127.0.0.1",
+            "--manager-host",
+            "10.0.0.1",
+            "--manager-port",
+            "6000",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Command::Worker { common, .. } => assert_eq!(common.self_port(), 5001),
+            _ => panic!("unexpected command"),
+        }
+    }
 }
