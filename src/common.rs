@@ -136,14 +136,14 @@ impl Config {
         }
     }
 
-    pub fn manager_host_and_port(&self) -> Option<&(String, u16)> {
+    pub fn manager_host_port(&self) -> Option<&(String, u16)> {
         match self {
             Config::Manager { manager_host_port, .. } => manager_host_port.as_ref(),
             Config::Worker { manager_host_port, .. } => Some(manager_host_port),
         }
     }
 
-    pub fn host_and_port(&self) -> &(String, u16) {
+    pub fn self_host_port(&self) -> &(String, u16) {
         match self {
             Config::Manager { self_host_port, .. } => self_host_port,
             Config::Worker { self_host_port, .. } => self_host_port,
@@ -213,6 +213,7 @@ pub fn now_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn node_id_roundtrips_uuid_string() {
@@ -228,6 +229,70 @@ mod tests {
         let id = NodeId::new().to_string();
         let parsed: NodeId = id.clone().into();
         assert_eq!(parsed.to_string(), id);
+    }
+
+    #[test]
+    fn config_from_cli_manager_sets_replication_factor_and_optional_manager_addr() {
+        let cli = Cli::try_parse_from([
+            "bin",
+            "manager",
+            "--grpc-port",
+            "5000",
+            "--self-host",
+            "127.0.0.1",
+            "--replication-factor",
+            "5",
+        ])
+        .unwrap();
+
+        let cfg: Config = cli.into();
+        match cfg {
+            Config::Manager {
+                grpc_port,
+                self_host_port,
+                manager_host_port,
+                replication_factor,
+            } => {
+                assert_eq!(grpc_port, 5000);
+                assert_eq!(self_host_port, ("127.0.0.1".to_string(), 5000));
+                assert_eq!(manager_host_port, None);
+                assert_eq!(replication_factor, 5);
+            }
+            other => panic!("unexpected config: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn config_from_cli_worker_sets_manager_addr_and_has_no_replication_factor() {
+        let cli = Cli::try_parse_from([
+            "bin",
+            "worker",
+            "--grpc-port",
+            "5001",
+            "--self-host",
+            "127.0.0.1",
+            "--self-port",
+            "7777",
+            "--manager-host",
+            "10.0.0.1",
+            "--manager-port",
+            "6000",
+        ])
+        .unwrap();
+
+        let cfg: Config = cli.into();
+        match cfg {
+            Config::Worker {
+                grpc_port,
+                self_host_port,
+                manager_host_port,
+            } => {
+                assert_eq!(grpc_port, 5001);
+                assert_eq!(self_host_port, ("127.0.0.1".to_string(), 7777));
+                assert_eq!(manager_host_port, ("10.0.0.1".to_string(), 6000));
+            }
+            other => panic!("unexpected config: {:?}", other),
+        }
     }
 
     #[test]

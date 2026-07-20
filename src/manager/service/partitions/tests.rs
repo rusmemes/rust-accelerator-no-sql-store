@@ -1,11 +1,237 @@
 use super::*;
 use crate::common::now_millis;
+use crate::manager::domain::ManagerProtocol;
 use crate::manager::service::test_support::*;
 use crate::manager::service::State;
 use std::collections::{HashMap, HashSet};
 
+const TEST_PARTITIONS_AMOUNT: usize = 4096;
+
+fn expected_master_for(partition: u16, workers: &[NodeId]) -> NodeId {
+    workers[partition as usize % workers.len()].clone()
+}
+
+fn expected_replicas_for(
+    partition: u16,
+    replication_factor: usize,
+    workers: &[NodeId],
+) -> Vec<NodeId> {
+    let master_index = partition as usize % workers.len();
+    (1..replication_factor)
+        .map(|replica| workers[calc_replica_index(workers.len(), master_index, replica)].clone())
+        .collect()
+}
+
 fn replicas(replicas: Vec<NodeId>) -> HashSet<NodeId> {
     replicas.into_iter().collect()
+}
+
+fn assert_no_old_replicas_overlap_new_mapping(partitions: &Partitions) {
+    for (partition_id, old_replicas) in &partitions.old_replicas {
+        let new_mapping = partitions
+            .mapping
+            .get(partition_id)
+            .expect("old replica partition has new mapping");
+
+        assert!(!old_replicas.contains(&new_mapping.master));
+        assert!(old_replicas.is_disjoint(&new_mapping.replicas));
+    }
+}
+
+#[tokio::test]
+async fn worker_partitions_recomputes_cluster_partition_mapping_and_broadcasts_cluster_state() {
+    let me = me("11111111-1111-1111-1111-111111111111");
+    let worker_a = node_id("22222222-2222-2222-2222-222222222222");
+    let worker_b = node_id("33333333-3333-3333-3333-333333333333");
+    let workers = vec![worker_a.clone(), worker_b.clone()];
+    let (mut service, _config) = service(me.clone());
+    service.state = Some(State {
+        epoch: Some(1),
+        elected_leader_id: Some(me.id.clone()),
+        nodes: HashMap::from([
+            (me.id.clone(), fresh_node(&me, now_millis())),
+            (worker_a.clone(), worker_node("worker-a.local", 9100, 0)),
+            (worker_b.clone(), worker_node("worker-b.local", 9101, 0)),
+        ]),
+        partitions: Default::default(),
+        workers_with_calculated_partitions: Default::default(),
+    });
+
+    let mut output = vec![];
+    worker_partitions(
+        service.state.as_mut().unwrap(),
+        &mut output,
+        &service.me,
+        3,
+    );
+
+    assert_eq!(output.len(), 2);
+    assert!(output.iter().all(|msg| matches!(
+        msg,
+        ManagerProtocol::ClusterState { recipient_id, state }
+            if (recipient_id == &worker_a || recipient_id == &worker_b)
+                && state.items.is_empty()
+                && state.partitions.mapping.len() == TEST_PARTITIONS_AMOUNT
+                && state.partitions.old_replicas.is_empty()
+    )));
+
+    let state = service.state.as_ref().expect("state exists");
+    assert_eq!(state.partitions.mapping.len(), TEST_PARTITIONS_AMOUNT);
+    assert!(state.partitions.old_replicas.is_empty());
+
+    for partition in [0, 1, 2, 4095] {
+        let actual = state.partitions.mapping.get(&partition).unwrap();
+        assert_eq!(actual.master, expected_master_for(partition, &workers));
+        assert_eq!(
+            actual.replicas,
+            replicas(expected_replicas_for(partition, 3, &workers))
+        );
+    }
+}
+
+#[tokio::test]
+async fn worker_partitions_moves_previous_mapping_to_old_mapping_when_worker_layout_changes() {
+    let me = me("11111111-1111-1111-1111-111111111111");
+    let worker_a = node_id("22222222-2222-2222-2222-222222222222");
+    let worker_b = node_id("33333333-3333-3333-3333-333333333333");
+    let worker_c = node_id("44444444-4444-4444-4444-444444444444");
+    let initial_workers = vec![worker_a.clone(), worker_b.clone()];
+    let new_workers = vec![worker_a.clone(), worker_b.clone(), worker_c.clone()];
+    let (mut service, _config) = service(me.clone());
+    service.state = Some(State {
+        epoch: Some(1),
+        elected_leader_id: Some(me.id.clone()),
+        nodes: HashMap::from([
+            (me.id.clone(), fresh_node(&me, now_millis())),
+            (worker_a.clone(), worker_node("worker-a.local", 9100, 0)),
+            (worker_b.clone(), worker_node("worker-b.local", 9101, 0)),
+        ]),
+        partitions: Default::default(),
+        workers_with_calculated_partitions: Default::default(),
+    });
+
+    let mut output = vec![];
+    worker_partitions(
+        service.state.as_mut().unwrap(),
+        &mut output,
+        &service.me,
+        1,
+    );
+
+    assert_eq!(output.len(), 2);
+    {
+        let state = service.state.as_ref().expect("state exists");
+        assert_eq!(state.partitions.mapping.len(), TEST_PARTITIONS_AMOUNT);
+        assert!(state.partitions.old_replicas.is_empty());
+        for partition in [0, 1, 4095] {
+            assert_eq!(
+                state.partitions.mapping.get(&partition).unwrap().master,
+                expected_master_for(partition, &initial_workers)
+            );
+        }
+    }
+
+    service
+        .state
+        .as_mut()
+        .unwrap()
+        .nodes
+        .insert(worker_c.clone(), worker_node("worker-c.local", 9102, 0));
+
+    output.clear();
+    worker_partitions(
+        service.state.as_mut().unwrap(),
+        &mut output,
+        &service.me,
+        1,
+    );
+
+    assert_eq!(output.len(), 3);
+    assert!(output.iter().all(|msg| matches!(
+        msg,
+        ManagerProtocol::ClusterState { state, .. }
+            if state.partitions.mapping.len() == TEST_PARTITIONS_AMOUNT
+                && !state.partitions.old_replicas.is_empty()
+                && state.partitions.old_replicas.len() < TEST_PARTITIONS_AMOUNT
+    )));
+
+    let state = service.state.as_ref().expect("state exists");
+    assert_no_old_replicas_overlap_new_mapping(&state.partitions);
+    for partition in [0, 1, 2, 4095] {
+        assert_eq!(
+            state.partitions.mapping.get(&partition).unwrap().master,
+            expected_master_for(partition, &new_workers)
+        );
+    }
+    assert!(!state.partitions.old_replicas.contains_key(&0));
+    assert!(!state.partitions.old_replicas.contains_key(&1));
+    assert_eq!(
+        state.partitions.old_replicas.get(&2),
+        Some(&replicas(vec![worker_a.clone()]))
+    );
+    assert_eq!(
+        state.partitions.old_replicas.get(&4095),
+        Some(&replicas(vec![worker_b.clone()]))
+    );
+}
+
+#[tokio::test]
+async fn worker_partitions_recomputes_while_old_mapping_is_present_and_merges_transition_mapping() {
+    let me = me("11111111-1111-1111-1111-111111111111");
+    let worker_a = node_id("22222222-2222-2222-2222-222222222222");
+    let worker_b = node_id("33333333-3333-3333-3333-333333333333");
+    let worker_c = node_id("44444444-4444-4444-4444-444444444444");
+    let (mut service, _config) = service(me.clone());
+
+    service.state = Some(State {
+        epoch: Some(1),
+        elected_leader_id: Some(me.id.clone()),
+        nodes: HashMap::from([
+            (me.id.clone(), fresh_node(&me, now_millis())),
+            (worker_a.clone(), worker_node("worker-a.local", 9100, 0)),
+            (worker_b.clone(), worker_node("worker-b.local", 9101, 0)),
+            (worker_c.clone(), worker_node("worker-c.local", 9102, 0)),
+        ]),
+        partitions: Partitions {
+            mapping: HashMap::from([(
+                1,
+                Partition {
+                    master: worker_a.clone(),
+                    replicas: HashSet::new(),
+                },
+            )]),
+            old_replicas: HashMap::from([(1, replicas(vec![worker_b.clone()]))]),
+        },
+        workers_with_calculated_partitions: [worker_a.clone(), worker_b.clone()]
+            .into_iter()
+            .collect(),
+    });
+
+    let mut output = vec![];
+    worker_partitions(
+        service.state.as_mut().unwrap(),
+        &mut output,
+        &service.me,
+        1,
+    );
+
+    assert_eq!(output.len(), 3);
+    let state = service.state.as_ref().expect("state exists");
+    assert_eq!(state.partitions.mapping.len(), TEST_PARTITIONS_AMOUNT);
+    assert_eq!(state.partitions.old_replicas.len(), 1);
+    assert_eq!(
+        state
+            .partitions
+            .mapping
+            .get(&1)
+            .map(|partition| &partition.master),
+        Some(&worker_b)
+    );
+    assert_eq!(
+        state.partitions.old_replicas.get(&1),
+        Some(&replicas(vec![worker_a]))
+    );
+    assert!(state.workers_with_calculated_partitions.contains(&worker_c));
 }
 
 #[test]
