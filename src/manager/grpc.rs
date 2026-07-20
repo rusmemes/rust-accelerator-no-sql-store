@@ -17,8 +17,7 @@ use input::{input_from_manager, input_from_worker};
 use manager_connection::new_manager_connection;
 use output::output;
 use session::{ManagerIOStream, WorkerIOStream};
-use std::{collections::HashMap, net::AddrParseError, sync::Arc};
-use thiserror::Error;
+use std::{collections::HashMap, sync::Arc};
 use tokio::{
     sync::mpsc::{Receiver, Sender},
     sync::RwLock,
@@ -213,20 +212,13 @@ impl ManagerApi for ManagerApiService {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum GrpcServerError {
-    #[error("Failed to parse address: {0}")]
-    AddressParse(#[from] AddrParseError),
-    #[error("GRPC transport error: {0}")]
-    Transport(#[from] tonic::transport::Error),
-}
-
 pub async fn start_server(
     config: Arc<RwLock<crate::common::Config>>,
     me: Me,
     channel: (Sender<ManagerProtocol>, Receiver<ManagerProtocol>),
     cancellation_token: CancellationToken,
-) -> Result<(), GrpcServerError> {
+) -> anyhow::Result<()> {
+
     let grpc_port = { config.read().await.grpc_port() };
     let grpc_address = format!("127.0.0.1:{grpc_port}").as_str().parse()?;
 
@@ -237,8 +229,7 @@ pub async fn start_server(
             channel, me, config,
         )))
         .serve_with_shutdown(grpc_address, cancellation_token.cancelled())
-        .await
-        .map_err(|error| GrpcServerError::Transport(error))?;
+        .await?;
 
     tracing::info!("GRPC Server is stopped");
 
