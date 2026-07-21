@@ -214,9 +214,8 @@ pub async fn start_server(
     tracing::info!("GRPC Server is starting at {}", grpc_address);
 
     Server::builder()
-        .add_service(ManagerApiServer::new(ManagerApiService::new(
-            channel, me, config,
-        )))
+        .add_service(ManagerApiServer::new(ManagerApiService::new(channel, me, config)))
+        // .add_service(ManagerApiServer::new(ManagerApiService::new(channel, me, config)))
         .serve_with_shutdown(grpc_address, cancellation_token.cancelled())
         .await?;
 
