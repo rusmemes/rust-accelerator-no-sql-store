@@ -1,29 +1,41 @@
 use crate::common::{NodeType, Partition, Partitions};
-use crate::manager::grpc::common::v1;
+use crate::conversions::common::v1;
 use std::collections::HashMap;
 
-pub(super) fn grpc_node_type_to_domain(node_type: i32) -> NodeType {
+pub mod api {
+    pub mod v1 {
+        tonic::include_proto!("manager_api.v1");
+    }
+}
+
+pub mod common {
+    pub mod v1 {
+        tonic::include_proto!("common.v1");
+    }
+}
+
+pub(crate) fn grpc_node_type_to_domain(node_type: i32) -> NodeType {
     match v1::NodeType::try_from(node_type).ok() {
         Some(v1::NodeType::Worker) => NodeType::Worker,
         _ => NodeType::Manager,
     }
 }
 
-pub(super) fn domain_node_type_to_grpc(node_type: NodeType) -> i32 {
+pub(crate) fn domain_node_type_to_grpc(node_type: NodeType) -> i32 {
     match node_type {
         NodeType::Manager => v1::NodeType::Manager as i32,
         NodeType::Worker => v1::NodeType::Worker as i32,
     }
 }
 
-pub(super) fn grpc_partitions_to_domain(partitions: v1::Partitions) -> Partitions {
+pub(crate) fn grpc_partitions_to_domain(partitions: v1::Partitions) -> Partitions {
     Partitions {
         mapping: grpc_partition_mapping_to_domain(partitions.mapping),
         old_replicas: grpc_old_replicas_to_domain(partitions.old_replicas),
     }
 }
 
-pub(super) fn domain_partitions_to_grpc(partitions: Partitions) -> v1::Partitions {
+pub(crate) fn domain_partitions_to_grpc(partitions: Partitions) -> v1::Partitions {
     v1::Partitions {
         mapping: domain_partition_mapping_to_grpc(partitions.mapping),
         old_replicas: domain_old_replicas_to_grpc(partitions.old_replicas),

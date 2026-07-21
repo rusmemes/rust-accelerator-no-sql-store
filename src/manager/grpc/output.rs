@@ -1,19 +1,15 @@
-use crate::common::Config;
 use crate::{
+    common::Config,
     common::{ClusterNode, ClusterState, Heartbeat, Me, NodeId, Partitions},
+    conversions::{
+        api::v1::{manager_event::Payload, worker_event, Heartbeat as GrpcHeartbeat, Leader as GrpcLeader, ManagerEvent, RemovePartitionFromReplica, VoteRequest as GrpcVoteRequest, VoteResponse as GrpcVoteResponse, WorkerEvent},
+        common::v1::{Addr, ClusterState as GrpcClusterState, GetState, Node},
+        domain_node_type_to_grpc,
+        domain_partitions_to_grpc
+    },
     manager::{
         domain::ManagerProtocol,
-        grpc::{
-            api::v1::{
-                manager_event::Payload, worker_event, Heartbeat as GrpcHeartbeat,
-                Leader as GrpcLeader, ManagerEvent,
-                RemovePartitionFromReplica, VoteRequest as GrpcVoteRequest, VoteResponse as GrpcVoteResponse,
-                WorkerEvent,
-            },
-            common::v1::{Addr, ClusterState as GrpcClusterState, GetState, Node},
-            conversions::{domain_node_type_to_grpc, domain_partitions_to_grpc},
-            session::{handle_common, ManagerIOStream, WorkerIOStream},
-        },
+        grpc::session::{handle_common, ManagerIOStream, WorkerIOStream},
     },
 };
 use std::collections::HashMap;
@@ -32,7 +28,7 @@ pub(super) async fn output(
     while let Some(message) = rx.recv().await {
         tracing::debug!("output: {:?}", message);
         match message {
-            ManagerProtocol::RemoveOldPartition {
+            ManagerProtocol::RemovePartitionFromReplica {
                 id,
                 replica_id,
                 partition_id,
@@ -48,7 +44,7 @@ pub(super) async fn output(
                 .await;
             }
             ManagerProtocol::Heartbeat {
-                recipient_id: id,
+                id: id,
                 heartbeat: Heartbeat { id: node_id, ts },
             } => {
                 handle_output_heartbeat(&tx, &manager_sessions, &worker_sessions, id, node_id, ts)

@@ -9,7 +9,7 @@ pub enum WorkerProtocol {
         manager: bool,
     },
     Heartbeat {
-        recipient_id: NodeId,
+        id: NodeId,
         heartbeat: Heartbeat,
     },
     GetClusterState {
@@ -27,7 +27,7 @@ pub enum WorkerProtocol {
         epoch: u64,
         ts: u64,
     },
-    RemoveOldPartition {
+    RemovePartitionFromReplica {
         id: NodeId,
         replica_id: NodeId,
         partition_id: u16,

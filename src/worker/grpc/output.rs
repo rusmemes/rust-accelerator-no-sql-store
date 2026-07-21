@@ -16,7 +16,7 @@ pub(super) async fn output(
     while let Some(message) = rx.recv().await {
         tracing::debug!("output: {:?}", message);
         match message {
-            WorkerProtocol::RemoveOldPartition {
+            WorkerProtocol::RemovePartitionFromReplica {
                 id,
                 replica_id,
                 partition_id,
@@ -24,9 +24,12 @@ pub(super) async fn output(
                 todo!()
             }
             WorkerProtocol::Heartbeat {
-                recipient_id: id,
+                id,
                 heartbeat: Heartbeat { id: node_id, ts },
             } => {
+                todo!()
+            }
+            WorkerProtocol::GetClusterState { id } => {
                 todo!()
             }
             WorkerProtocol::NewConnection {
@@ -48,23 +51,11 @@ pub(super) async fn output(
                     tracing::error!("NewConnection is not expected to be received for worker");
                 }
             }
-            WorkerProtocol::GetClusterState { id } => {
-                todo!()
-            }
-            WorkerProtocol::ClusterState {
-                recipient_id,
-                state:
-                ClusterState {
-                    epoch,
-                    leader_id,
-                    items,
-                    partitions,
-                },
-            } => {
-                todo!()
+            WorkerProtocol::ClusterState { .. } => {
+                tracing::error!("ClusterState is not expected to be sent by workers");
             }
             WorkerProtocol::Leader { id, epoch, ts } => {
-                todo!()
+                tracing::error!("Leader is not expected to be sent by workers");
             }
             WorkerProtocol::NodeDisconnected { .. } => {
                 unreachable!("NodeDisconnected is not expected to be sent");

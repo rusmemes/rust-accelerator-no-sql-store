@@ -100,15 +100,14 @@ impl WorkerService {
                 WorkerProtocol::Leader { id, epoch, ts } => {
                     handle_leader(output, state, id, epoch, ts, &self.me)
                 }
-                WorkerProtocol::RemoveOldPartition {
-                    id,
+                WorkerProtocol::RemovePartitionFromReplica {
                     replica_id,
                     partition_id,
+                    ..
                 } => handle_remove_old_partition(
                     state,
                     replica_id,
                     partition_id,
-                    id,
                     output,
                     &self.me,
                 ),

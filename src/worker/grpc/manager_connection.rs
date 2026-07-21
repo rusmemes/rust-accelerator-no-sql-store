@@ -1,18 +1,23 @@
-use crate::worker::grpc::input::input_from_manager;
 use crate::{
     common::{Me, NodeId},
+    conversions::{
+        api::v1::{
+            manager_api_client::ManagerApiClient,
+            worker_event::Payload,
+            Connect,
+            ConnectResponse,
+            WorkerEvent
+        },
+        common::v1::Addr
+    },
+    worker::grpc::input::input_from_manager,
     worker::{
         domain::WorkerProtocol,
         grpc::{
-            api::v1::{
-                manager_api_client::ManagerApiClient, worker_event::Payload, Connect, ConnectResponse,
-                WorkerEvent,
-            },
-            common::v1::Addr,
             session::{IOStreamExt, WorkerIOStream},
             GRPC_CONNECTION_CHANNEL_BUFFER_SIZE,
         },
-    },
+    }
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -97,9 +102,10 @@ async fn start_communication_with_manager(
 
             let sessions = sessions.clone();
             let tx = tx.clone();
+            let me = me.clone();
 
             tokio::spawn(async move {
-                input_from_manager(input_stream, &id, host, port, tx.clone()).await;
+                input_from_manager(input_stream, &id, host, port, tx.clone(), &me).await;
                 sessions.write().await.remove(&id);
                 tracing::info!("Node {} is disconnected", id);
                 let _ = tx.send(WorkerProtocol::NodeDisconnected { id }).await;

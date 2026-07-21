@@ -20,7 +20,7 @@ pub(super) fn heartbeats(state: &mut State, output: &mut Vec<ManagerProtocol>, m
                     .keys()
                     .filter(|key| **key != me.id)
                     .map(|key| ManagerProtocol::Heartbeat {
-                        recipient_id: key.clone(),
+                        id: key.clone(),
                         heartbeat: Heartbeat {
                             id: me.id.clone(),
                             ts: now,
@@ -72,7 +72,7 @@ pub(super) fn handle_heartbeat(
                         .keys()
                         .filter(|key| *key != &id && *key != &me.id)
                         .map(|key| ManagerProtocol::Heartbeat {
-                            recipient_id: key.clone(),
+                            id: key.clone(),
                             heartbeat: Heartbeat { id: id.clone(), ts },
                         }),
                 );

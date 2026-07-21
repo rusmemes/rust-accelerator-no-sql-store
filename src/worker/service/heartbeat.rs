@@ -16,7 +16,7 @@ pub(super) fn heartbeats(state: &mut State, output: &mut Vec<WorkerProtocol>, me
             *last_heartbeat = now;
             output.extend(state.nodes.keys().filter(|key| **key != me.id).map(|key| {
                 WorkerProtocol::Heartbeat {
-                    recipient_id: key.clone(),
+                    id: key.clone(),
                     heartbeat: Heartbeat {
                         id: me.id.clone(),
                         ts: now,

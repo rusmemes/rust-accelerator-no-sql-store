@@ -4,26 +4,14 @@ mod manager_connection;
 mod input;
 
 use crate::common::{CommunicationStreamEither, Config, Me, NodeId};
+use crate::conversions::api::v1::WorkerEvent;
 use crate::worker::domain::WorkerProtocol;
-use crate::worker::grpc::api::v1::WorkerEvent;
 use crate::worker::grpc::output::output;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::RwLock;
 use tonic::Status;
-
-mod api {
-    pub mod v1 {
-        tonic::include_proto!("manager_api.v1");
-    }
-}
-
-mod common {
-    pub mod v1 {
-        tonic::include_proto!("common.v1");
-    }
-}
 
 const GRPC_CONNECTION_CHANNEL_BUFFER_SIZE: usize = 32;
 

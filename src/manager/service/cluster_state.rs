@@ -151,7 +151,7 @@ pub(super) fn handle_remove_old_partition(
             .keys()
             .filter(|key| *key != &replica_id && *key != &id && *key != &me.id)
         {
-            output.push(ManagerProtocol::RemoveOldPartition {
+            output.push(ManagerProtocol::RemovePartitionFromReplica {
                 id: recipient_id.clone(),
                 replica_id: replica_id.clone(),
                 partition_id,

@@ -9,7 +9,7 @@ pub enum ManagerProtocol {
         manager: bool,
     },
     Heartbeat {
-        recipient_id: NodeId,
+        id: NodeId,
         heartbeat: Heartbeat,
     },
     GetClusterState {
@@ -37,7 +37,7 @@ pub enum ManagerProtocol {
     NodeDisconnected {
         id: NodeId,
     },
-    RemoveOldPartition {
+    RemovePartitionFromReplica {
         id: NodeId,
         replica_id: NodeId,
         partition_id: u16,

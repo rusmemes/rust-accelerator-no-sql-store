@@ -1,6 +1,6 @@
 use crate::common::{CommunicationStreamEither, NodeId};
+use crate::conversions::api::v1::WorkerEvent;
 use crate::worker::domain::WorkerProtocol;
-use crate::worker::grpc::api::v1::WorkerEvent;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::fmt::Debug;

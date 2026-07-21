@@ -71,7 +71,6 @@ pub(super) fn handle_remove_old_partition(
     state: &mut State,
     replica_id: NodeId,
     partition_id: u16,
-    id: NodeId,
     output: &mut Vec<WorkerProtocol>,
     me: &Me
 ) {
@@ -86,7 +85,7 @@ pub(super) fn handle_remove_old_partition(
         state.partitions.old_replicas.remove(&partition_id);
     }
 
-    if state.nodes.get(&id).is_none() || !state.nodes.get(&replica_id).is_none() {
+    if !state.nodes.get(&replica_id).is_none() {
         output.extend(
             state
                 .nodes

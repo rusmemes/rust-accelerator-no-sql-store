@@ -1,12 +1,23 @@
-use crate::common::{Me, NodeId};
-use crate::manager::domain::ManagerProtocol;
-use crate::manager::grpc::api::v1::manager_api_client::ManagerApiClient;
-use crate::manager::grpc::api::v1::manager_event::Payload;
-use crate::manager::grpc::api::v1::{Config, Connect, ConnectResponse, ManagerEvent};
-use crate::manager::grpc::common::v1::Addr;
-use crate::manager::grpc::input::input_from_manager;
-use crate::manager::grpc::session::{IOStreamExt, ManagerIOStream};
-use crate::manager::grpc::GRPC_CONNECTION_CHANNEL_BUFFER_SIZE;
+use crate::{
+    common::{Me, NodeId},
+    conversions::{
+        api::v1::{
+            manager_api_client::ManagerApiClient,
+            manager_event::Payload,
+            Config,
+            Connect,
+            ConnectResponse,
+            ManagerEvent
+        },
+        common::v1::Addr
+    },
+    manager::{
+        domain::ManagerProtocol,
+        grpc::input::input_from_manager,
+        grpc::session::{IOStreamExt, ManagerIOStream},
+        grpc::GRPC_CONNECTION_CHANNEL_BUFFER_SIZE
+    }
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;

@@ -1,24 +1,23 @@
 use crate::{
     common::{ClusterNode, ClusterState, Heartbeat, Me, NodeId},
-    manager::{
-        domain::ManagerProtocol,
-        grpc::{
-            api::v1::{
-                manager_event::Payload,
-                worker_event,
-                Connect as GrpcConnect,
-                Heartbeat as GrpcHeartbeat,
-                Leader as GrpcLeader,
-                ManagerEvent,
-                RemovePartitionFromReplica,
-                VoteRequest as GrpcVoteRequest,
-                VoteResponse as GrpcVoteResponse,
-                WorkerEvent
-            },
-            common::v1::{Addr, ClusterState as GrpcClusterState, Node},
-            conversions::{grpc_node_type_to_domain, grpc_partitions_to_domain}
-        }
+    conversions::{
+        api::v1::{
+            manager_event::Payload,
+            worker_event,
+            Connect as GrpcConnect,
+            Heartbeat as GrpcHeartbeat,
+            Leader as GrpcLeader,
+            ManagerEvent,
+            RemovePartitionFromReplica,
+            VoteRequest as GrpcVoteRequest,
+            VoteResponse as GrpcVoteResponse,
+            WorkerEvent
+        },
+        common::v1::{Addr, ClusterState as GrpcClusterState, Node},
+        grpc_node_type_to_domain,
+        grpc_partitions_to_domain
     },
+    manager::domain::ManagerProtocol
 };
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
@@ -54,7 +53,7 @@ pub(super) async fn input_from_worker<S>(
                     partition_id,
                 }) => {
                     if let Err(e) = tx
-                        .send(ManagerProtocol::RemoveOldPartition {
+                        .send(ManagerProtocol::RemovePartitionFromReplica {
                             id: id.clone(),
                             replica_id: replica_id.into(),
                             partition_id: partition_id as u16,
@@ -68,7 +67,7 @@ pub(super) async fn input_from_worker<S>(
                 worker_event::Payload::Heartbeat(GrpcHeartbeat { id: node_id, ts }) => {
                     if let Err(e) = tx
                         .send(ManagerProtocol::Heartbeat {
-                            recipient_id: id.clone(),
+                            id: id.clone(),
                             heartbeat: Heartbeat {
                                 id: node_id.into(),
                                 ts,
@@ -143,7 +142,7 @@ pub(super) async fn input_from_manager(
                     partition_id,
                 }) => {
                     if let Err(e) = tx
-                        .send(ManagerProtocol::RemoveOldPartition {
+                        .send(ManagerProtocol::RemovePartitionFromReplica {
                             id: id.clone(),
                             replica_id: replica_id.into(),
                             partition_id: partition_id as u16,
@@ -157,7 +156,7 @@ pub(super) async fn input_from_manager(
                 Payload::Heartbeat(GrpcHeartbeat { id: node_id, ts }) => {
                     if let Err(e) = tx
                         .send(ManagerProtocol::Heartbeat {
-                            recipient_id: id.clone(),
+                            id: id.clone(),
                             heartbeat: Heartbeat {
                                 id: node_id.into(),
                                 ts,
@@ -183,7 +182,6 @@ pub(super) async fn input_from_manager(
                     leader_id,
                     nodes,
                     partitions,
-                    ..
                 }) => {
                     if let Some(partitions) = partitions {
                         if let Err(e) = tx

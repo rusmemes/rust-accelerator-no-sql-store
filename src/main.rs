@@ -5,6 +5,7 @@ mod cli;
 mod common;
 mod manager;
 mod worker;
+mod conversions;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

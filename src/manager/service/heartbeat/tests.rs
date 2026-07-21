@@ -26,7 +26,7 @@ async fn heartbeat_from_unknown_node_requests_cluster_state_from_peers() {
     service
         .process(
             ManagerProtocol::Heartbeat {
-                recipient_id: me.id.clone(),
+                id: me.id.clone(),
                 heartbeat: Heartbeat {
                     id: node_id("33333333-3333-3333-3333-333333333333"),
                     ts: 42,
@@ -72,8 +72,8 @@ async fn heartbeat_from_known_peer_is_forwarded_only_when_we_are_leader() {
 
     assert!(matches!(
         forwarded.as_slice(),
-        [ManagerProtocol::Heartbeat { recipient_id, heartbeat }]
-            if recipient_id == &peer_two
+        [ManagerProtocol::Heartbeat { id, heartbeat }]
+            if id == &peer_two
                 && heartbeat.id == peer_one
                 && heartbeat.ts == 42
     ));
@@ -132,8 +132,8 @@ async fn heartbeat_from_worker_updates_worker_without_forwarding() {
 
     assert!(matches!(
         output.as_slice(),
-        [ManagerProtocol::Heartbeat { recipient_id, heartbeat }]
-            if recipient_id == &manager_peer && heartbeat.id == worker && heartbeat.ts == 44
+        [ManagerProtocol::Heartbeat { id, heartbeat }]
+            if id == &manager_peer && heartbeat.id == worker && heartbeat.ts == 44
     ));
     assert_eq!(
         service
@@ -170,7 +170,7 @@ async fn tick_emits_heartbeats_for_stale_self_heartbeat() {
 
     assert!(matches!(
         output.as_slice(),
-        [ManagerProtocol::Heartbeat { recipient_id, heartbeat }] if recipient_id == &peer_id
+        [ManagerProtocol::Heartbeat { id, heartbeat }] if id == &peer_id
             && heartbeat.id == me.id
     ));
 }
