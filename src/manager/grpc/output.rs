@@ -33,7 +33,7 @@ pub(super) async fn output(
                 replica_id,
                 partition_id,
             } => {
-                handle_output_remove_old_partition(
+                handle_output_remove_partition_from_replica(
                     &tx,
                     &manager_sessions,
                     &worker_sessions,
@@ -310,7 +310,7 @@ pub(super) async fn handle_output_heartbeat(
     }
 }
 
-pub(super) async fn handle_output_remove_old_partition(
+pub(super) async fn handle_output_remove_partition_from_replica(
     tx: &Sender<ManagerProtocol>,
     manager_sessions: &RwLock<HashMap<NodeId, ManagerIOStream>>,
     worker_sessions: &RwLock<HashMap<NodeId, WorkerIOStream>>,
