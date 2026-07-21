@@ -58,7 +58,7 @@ pub(super) async fn output(
                 if manager {
                     new_manager_connection(&me, &tx, &manager_sessions, host, port).await;
                 } else {
-                    tracing::error!("NewConnection is not expected to be received for worker");
+                    todo!("Connect to another worker")
                 }
             }
             WorkerProtocol::ClusterState { .. } => {

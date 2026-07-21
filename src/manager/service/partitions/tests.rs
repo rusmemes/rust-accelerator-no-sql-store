@@ -70,7 +70,7 @@ async fn worker_partitions_recomputes_cluster_partition_mapping_and_broadcasts_c
         msg,
         ManagerProtocol::ClusterState { recipient_id, state }
             if (recipient_id == &worker_a || recipient_id == &worker_b)
-                && state.items.is_empty()
+                && state.nodes.is_empty()
                 && state.partitions.mapping.len() == TEST_PARTITIONS_AMOUNT
                 && state.partitions.old_replicas.is_empty()
     )));

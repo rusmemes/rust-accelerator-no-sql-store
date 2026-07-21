@@ -90,7 +90,7 @@ pub struct ClusterNode {
 pub struct ClusterState {
     pub epoch: u64,
     pub leader_id: NodeId,
-    pub items: Vec<ClusterNode>,
+    pub nodes: Vec<ClusterNode>,
     pub partitions: Partitions,
 }
 

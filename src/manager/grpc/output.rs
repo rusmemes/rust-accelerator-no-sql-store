@@ -80,7 +80,7 @@ pub(super) async fn output(
                     ClusterState {
                         epoch,
                         leader_id,
-                        items,
+                        nodes: items,
                         partitions,
                     },
             } => {

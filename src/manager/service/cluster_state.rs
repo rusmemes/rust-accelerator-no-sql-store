@@ -79,7 +79,7 @@ pub(super) fn handle_get_cluster_state(
             state: ClusterState {
                 epoch,
                 leader_id,
-                items: state
+                nodes: state
                     .nodes
                     .iter()
                     .map(
