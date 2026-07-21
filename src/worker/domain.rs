@@ -22,6 +22,11 @@ pub enum WorkerProtocol {
     NodeDisconnected {
         id: NodeId,
     },
+    Leader {
+        id: NodeId,
+        epoch: u64,
+        ts: u64,
+    },
     RemoveOldPartition {
         id: NodeId,
         replica_id: NodeId,

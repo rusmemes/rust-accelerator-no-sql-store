@@ -2,6 +2,7 @@ use crate::common::{now_millis, ClusterState, Config, Heartbeat, Me, Node, NodeT
 use crate::worker::domain::WorkerProtocol;
 use crate::worker::service::cluster_state::handle_cluster_state;
 use crate::worker::service::connection::{handle_new_connection, handle_node_disconnected};
+use crate::worker::service::election::handle_leader;
 use crate::worker::service::heartbeat::{handle_heartbeat, heartbeats};
 use crate::worker::service::state::State;
 use std::collections::HashMap;
@@ -14,6 +15,7 @@ mod cluster_state;
 mod connection;
 mod heartbeat;
 mod state;
+mod election;
 
 #[derive(Debug)]
 struct WorkerService {
@@ -94,6 +96,9 @@ impl WorkerService {
                 } => handle_cluster_state(output, state, epoch, leader_id, items, partitions),
                 WorkerProtocol::NodeDisconnected { id } => {
                     handle_node_disconnected(state, id, &self.me)
+                }
+                WorkerProtocol::Leader { id, epoch, ts } => {
+                    handle_leader(output, state, id, epoch, ts, &self.me);
                 }
                 WorkerProtocol::RemoveOldPartition { .. } => {
                     tracing::error!("RemoveOldPartition received on the worker {}", self.me.id)
