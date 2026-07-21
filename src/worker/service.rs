@@ -101,7 +101,7 @@ impl WorkerService {
                     handle_leader(output, state, id, epoch, ts, &self.me);
                 }
                 WorkerProtocol::RemoveOldPartition { .. } => {
-                    tracing::error!("RemoveOldPartition received on the worker {}", self.me.id)
+                    todo!()
                 }
             }
         }
