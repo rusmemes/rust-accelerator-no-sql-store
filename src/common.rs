@@ -210,6 +210,16 @@ pub fn now_millis() -> u64 {
         .as_millis() as u64
 }
 
+/**
+EitherStream is a stream that can send messages to either a Sender<Result<Message, Status>> or a Sender<Message>.
+It is used to send messages to either the gRPC output stream or the gRPC input stream.
+*/
+#[derive(Clone)]
+pub(super) enum CommunicationStreamEither<A: Clone, B: Clone> {
+    Input(A),
+    Output(B),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

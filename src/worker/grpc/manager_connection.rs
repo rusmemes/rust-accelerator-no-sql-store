@@ -3,19 +3,20 @@ use crate::{
     conversions::{
         api::v1::{
             manager_api_client::ManagerApiClient,
-            manager_event::Payload,
-            Config,
+            worker_event::Payload,
             Connect,
             ConnectResponse,
-            ManagerEvent
+            WorkerEvent
         },
         common::v1::Addr
     },
-    manager::{
-        domain::ManagerProtocol,
-        grpc::input::input_from_manager,
-        grpc::session::{IOStreamExt, ManagerIOStream},
-        grpc::GRPC_CONNECTION_CHANNEL_BUFFER_SIZE
+    worker::grpc::input::input_from_manager,
+    worker::{
+        domain::WorkerProtocol,
+        grpc::{
+            session::{IOStreamExt, WorkerIOStream},
+            GRPC_CONNECTION_CHANNEL_BUFFER_SIZE,
+        },
     }
 };
 use std::collections::HashMap;
@@ -27,21 +28,20 @@ use tonic::{Request, Response, Streaming};
 
 pub(super) async fn new_manager_connection(
     me: &Me,
-    tx: &Sender<ManagerProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
+    tx: &Sender<WorkerProtocol>,
+    sessions: &Arc<RwLock<HashMap<NodeId, WorkerIOStream>>>,
     host: String,
     port: u32,
-    replication_factor: usize,
 ) {
     let client = ManagerApiClient::connect(format!("http://{host}:{port}")).await;
     match client {
         Ok(mut client) => {
             tracing::debug!("Connecting to manager");
             let (grpc_output, rx) =
-                tokio::sync::mpsc::channel::<ManagerEvent>(GRPC_CONNECTION_CHANNEL_BUFFER_SIZE);
+                tokio::sync::mpsc::channel::<WorkerEvent>(GRPC_CONNECTION_CHANNEL_BUFFER_SIZE);
             let outbound = ReceiverStream::new(rx);
 
-            let response = client.open_connection(Request::new(outbound)).await;
+            let response = client.open_worker_connection(Request::new(outbound)).await;
             match response {
                 Ok(response) => {
                     tracing::debug!("Connected to manager");
@@ -53,7 +53,6 @@ pub(super) async fn new_manager_connection(
                         port,
                         grpc_output,
                         response,
-                        replication_factor,
                     )
                     .await;
                 }
@@ -70,33 +69,30 @@ pub(super) async fn new_manager_connection(
 
 async fn start_communication_with_manager(
     me: &Me,
-    tx: &Sender<ManagerProtocol>,
-    sessions: &Arc<RwLock<HashMap<NodeId, ManagerIOStream>>>,
+    tx: &Sender<WorkerProtocol>,
+    sessions: &Arc<RwLock<HashMap<NodeId, WorkerIOStream>>>,
     host: String,
     port: u32,
-    grpc_output: Sender<ManagerEvent>,
-    response: Response<Streaming<ManagerEvent>>,
-    replication_factor: usize,
+    grpc_output: Sender<WorkerEvent>,
+    response: Response<Streaming<WorkerEvent>>,
 ) {
     let mut input_stream = response.into_inner();
-    let sender = ManagerIOStream::Output(grpc_output);
+    let sender = WorkerIOStream::Output(grpc_output);
     if sender
-        .send(ManagerEvent {
+        .send(WorkerEvent {
             payload: Some(Payload::Connect(Connect {
                 id: me.id.to_string(),
                 addr: Some(Addr {
                     host: me.host.clone(),
                     port: me.port,
                 }),
-                config: Some(Config {
-                    replication_factor: replication_factor as u32,
-                }),
+                config: None,
             })),
         })
         .await
         .is_ok()
     {
-        if let Ok(Some(ManagerEvent {
+        if let Ok(Some(WorkerEvent {
             payload: Some(Payload::ConnectResponse(ConnectResponse { id })),
         })) = input_stream.message().await
         {
@@ -107,11 +103,12 @@ async fn start_communication_with_manager(
             let sessions = sessions.clone();
             let tx = tx.clone();
             let me = me.clone();
+
             tokio::spawn(async move {
-                input_from_manager(me, input_stream, &id, host, port, tx.clone()).await;
+                input_from_manager(input_stream, &id, host, port, tx.clone(), &me).await;
                 sessions.write().await.remove(&id);
                 tracing::info!("Node {} is disconnected", id);
-                let _ = tx.send(ManagerProtocol::NodeDisconnected { id }).await;
+                let _ = tx.send(WorkerProtocol::NodeDisconnected { id }).await;
             });
         } else {
             tracing::error!("Node {}:{} is not connected ", host, port);

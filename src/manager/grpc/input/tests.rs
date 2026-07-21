@@ -1,7 +1,6 @@
 use super::*;
+use crate::conversions::common::v1::GetState;
 use crate::manager::domain::ManagerProtocol;
-use crate::manager::grpc::api::v1::{worker_event, Heartbeat as GrpcHeartbeat, WorkerEvent};
-use crate::manager::grpc::common::v1::GetState;
 use crate::manager::grpc::test_support::*;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -64,7 +63,7 @@ async fn input_from_worker_forwards_messages_and_stops_when_stream_ends() {
     assert!(matches!(
         heartbeat,
         ManagerProtocol::Heartbeat {
-            recipient_id,
+            id: recipient_id,
             heartbeat: Heartbeat { id, ts },
         } if recipient_id == worker_id && id == worker_id && ts == 44
     ));

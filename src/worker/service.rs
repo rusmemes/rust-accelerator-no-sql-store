@@ -1,11 +1,21 @@
-use crate::common::{now_millis, Config, Me, Node, NodeType};
+use crate::common::{now_millis, ClusterState, Config, Heartbeat, Me, Node, NodeType};
 use crate::worker::domain::WorkerProtocol;
-use crate::worker::service::heartbeat::heartbeats;
+use crate::worker::service::cluster_state::{handle_cluster_state, handle_remove_old_partition};
+use crate::worker::service::connection::{handle_new_connection, handle_node_disconnected};
+use crate::worker::service::election::handle_leader;
+use crate::worker::service::heartbeat::{handle_heartbeat, heartbeats};
 use crate::worker::service::state::State;
 use std::collections::HashMap;
+use std::time::Duration;
+use tokio::select;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio_util::sync::CancellationToken;
 
-mod state;
+mod cluster_state;
+mod connection;
+mod election;
 mod heartbeat;
+mod state;
 
 #[derive(Debug)]
 struct WorkerService {
@@ -56,5 +66,104 @@ impl WorkerService {
             // TODO: work on state
         }
         tracing::debug!("state: {:?}", self.state);
+    }
+
+    async fn process(&mut self, msg: WorkerProtocol, output: &mut Vec<WorkerProtocol>) {
+        if let Some(state) = self.state.as_mut() {
+            match msg {
+                WorkerProtocol::NewConnection {
+                    id,
+                    host,
+                    port,
+                    manager,
+                } => handle_new_connection(output, state, id, host, port, &self.me, manager),
+                WorkerProtocol::Heartbeat {
+                    heartbeat: Heartbeat { id, ts },
+                    ..
+                } => handle_heartbeat(output, state, id, ts, &self.me),
+                WorkerProtocol::GetClusterState { .. } => {
+                    tracing::error!("GetClusterState received on the worker {}", self.me.id);
+                }
+                WorkerProtocol::ClusterState {
+                    state:
+                        ClusterState {
+                            epoch,
+                            leader_id,
+                            items,
+                            partitions,
+                        },
+                    ..
+                } => handle_cluster_state(output, state, epoch, leader_id, items, partitions),
+                WorkerProtocol::NodeDisconnected { id } => {
+                    handle_node_disconnected(state, id, &self.me)
+                }
+                WorkerProtocol::Leader { id, epoch, ts } => {
+                    handle_leader(output, state, id, epoch, ts, &self.me)
+                }
+                WorkerProtocol::RemovePartitionFromReplica {
+                    replica_id,
+                    partition_id,
+                    ..
+                } => handle_remove_old_partition(
+                    state,
+                    replica_id,
+                    partition_id,
+                    output,
+                    &self.me,
+                ),
+            }
+        }
+        self.tick(output).await
+    }
+}
+
+/// Runs the worker service event loop.
+///
+/// The service owns the in-memory cluster state machine. It consumes protocol
+/// messages from gRPC, emits outbound protocol messages, and performs periodic heartbeat.
+pub async fn start_service(
+    me: Me,
+    config: Config,
+    (tx, mut rx): (Sender<WorkerProtocol>, Receiver<WorkerProtocol>),
+    cancellation_token: CancellationToken,
+) {
+    let mut service = WorkerService::new(me, config);
+    for msg in service.get_init_messages().await {
+        if let Err(e) = tx.send(msg).await {
+            tracing::error!("Error sending response: {}", e);
+            return;
+        }
+    }
+
+    tracing::info!("Manager service started");
+    let mut ticker = tokio::time::interval(Duration::from_millis(100));
+    let mut output = vec![];
+    loop {
+        select! {
+            biased;
+            _ = cancellation_token.cancelled() => {
+                tracing::info!("Manager service stopped");
+                break;
+            }
+            node_protocol = rx.recv() => {
+                if let Some(message) = node_protocol {
+                    tracing::debug!("input: {:?}", message);
+                    service.process(message, &mut output).await;
+                    for msg in output.drain(..) {
+                        if let Err(e) = tx.send(msg).await {
+                            tracing::error!("Error sending response: {}", e);
+                        }
+                    }
+                }
+            }
+            _ = ticker.tick() => {
+                service.tick(&mut output).await;
+                for msg in output.drain(..) {
+                    if let Err(e) = tx.send(msg).await {
+                        tracing::error!("Error sending response: {}", e);
+                    }
+                }
+            }
+        }
     }
 }

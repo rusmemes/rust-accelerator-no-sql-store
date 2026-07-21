@@ -1,5 +1,6 @@
 mod service;
 mod domain;
+mod grpc;
 
 use crate::common::Config;
 

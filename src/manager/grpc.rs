@@ -1,17 +1,19 @@
-use crate::manager::grpc::api::v1::{worker_event, Config};
 use crate::{
     common::{Me, NodeId},
-    manager::{
-        domain::ManagerProtocol,
-        grpc::{
-            api::v1::{
-                manager_api_server::{ManagerApi, ManagerApiServer}, manager_event::Payload, Connect, ConnectResponse,
-                ManagerEvent,
-                WorkerEvent,
-            },
-            common::v1::Addr,
+    conversions::{
+        api::v1::{
+            manager_api_server::{ManagerApi, ManagerApiServer},
+            manager_event::Payload,
+            worker_event,
+            Config,
+            Connect,
+            ConnectResponse,
+            ManagerEvent,
+            WorkerEvent
         },
+        common::v1::Addr
     },
+    manager::domain::ManagerProtocol
 };
 use input::{input_from_manager, input_from_worker};
 use manager_connection::new_manager_connection;
@@ -26,19 +28,6 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{transport::Server, Request, Response, Status, Streaming};
 
-mod api {
-    pub mod v1 {
-        tonic::include_proto!("manager_api.v1");
-    }
-}
-
-mod common {
-    pub mod v1 {
-        tonic::include_proto!("common.v1");
-    }
-}
-
-mod conversions;
 mod input;
 mod manager_connection;
 mod output;

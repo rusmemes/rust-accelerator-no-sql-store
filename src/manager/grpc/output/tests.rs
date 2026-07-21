@@ -1,7 +1,7 @@
 use super::*;
 use crate::common::{NodeType, Partition};
-use crate::manager::grpc::api::v1::{worker_event, Leader};
-use crate::manager::grpc::common::v1::NodeType as GrpcNodeType;
+use crate::conversions;
+use crate::conversions::api::v1::Leader;
 use crate::manager::grpc::test_support::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -129,7 +129,7 @@ async fn output_routes_cluster_state_to_worker_session_includes_partitions() {
                 .as_ref()
                 .is_some_and(|addr| addr.host == "manager.local" && addr.port == 9001)
             && node.last_heartbeat == 10
-            && node.node_type == GrpcNodeType::Manager as i32
+            && node.node_type == conversions::common::v1::NodeType::Manager as i32
     }));
     assert!(cluster_state.nodes.iter().any(|node| {
         node.id == worker_node_id.to_string()
@@ -138,7 +138,7 @@ async fn output_routes_cluster_state_to_worker_session_includes_partitions() {
                 .as_ref()
                 .is_some_and(|addr| addr.host == "worker.local" && addr.port == 9100)
             && node.last_heartbeat == 11
-            && node.node_type == GrpcNodeType::Worker as i32
+            && node.node_type == conversions::common::v1::NodeType::Worker as i32
     }));
     let partitions = cluster_state.partitions.expect("partitions");
     let mapping = partitions.mapping.get(&7).expect("mapping");
@@ -205,7 +205,7 @@ async fn output_routes_cluster_state_to_manager_session_includes_partitions() {
             .is_some_and(|addr| addr.host == "self.local" && addr.port == 7000)
     );
     assert_eq!(node.last_heartbeat, 77);
-    assert_eq!(node.node_type, GrpcNodeType::Manager as i32);
+    assert_eq!(node.node_type, conversions::common::v1::NodeType::Manager as i32);
     assert!(
         cluster_state
             .partitions

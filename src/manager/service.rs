@@ -105,7 +105,7 @@ impl ManagerService {
     async fn process(&mut self, msg: ManagerProtocol, output: &mut Vec<ManagerProtocol>) {
         if let Some(state) = self.state.as_mut() {
             match msg {
-                ManagerProtocol::RemoveOldPartition {
+                ManagerProtocol::RemovePartitionFromReplica {
                     id,
                     replica_id,
                     partition_id,
