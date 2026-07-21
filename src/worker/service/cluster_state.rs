@@ -41,25 +41,15 @@ pub(super) fn handle_cluster_state(
                             *node_last_heartbeat = last_heartbeat;
                         }
                     } else {
-                        match node_type {
-                            NodeType::Manager => output.push(WorkerProtocol::NewConnection {
-                                id: None,
-                                host,
-                                port,
-                                manager: true,
-                            }),
-                            NodeType::Worker => {
-                                state.nodes.insert(
-                                    id,
-                                    Node {
-                                        host,
-                                        port,
-                                        last_heartbeat,
-                                        node_type,
-                                    },
-                                );
-                            }
-                        }
+                        output.push(WorkerProtocol::NewConnection {
+                            id: None,
+                            host,
+                            port,
+                            manager: match node_type {
+                                NodeType::Manager => true,
+                                NodeType::Worker => false,
+                            },
+                        });
                     }
                 }
             }
@@ -72,7 +62,7 @@ pub(super) fn handle_remove_old_partition(
     replica_id: NodeId,
     partition_id: u16,
     output: &mut Vec<WorkerProtocol>,
-    me: &Me
+    me: &Me,
 ) {
     let remove = state
         .partitions
