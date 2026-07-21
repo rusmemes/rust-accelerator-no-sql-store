@@ -99,7 +99,7 @@ pub(super) async fn input_from_manager<S>(
                                     epoch,
                                     leader_id: leader_id.into(),
                                     partitions: grpc_partitions_to_domain(partitions),
-                                    items: nodes
+                                    nodes: nodes
                                         .into_iter()
                                         .filter_map(|node| {
                                             if let Node {

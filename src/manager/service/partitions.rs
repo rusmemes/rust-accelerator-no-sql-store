@@ -74,7 +74,7 @@ fn create_new_workers_state(state: &mut State) -> ClusterState {
             .elected_leader_id
             .clone()
             .expect("existing checked above"),
-        items: vec![],
+        nodes: vec![],
         partitions: Partitions {
             mapping: state
                 .partitions

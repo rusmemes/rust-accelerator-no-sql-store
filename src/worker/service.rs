@@ -89,7 +89,7 @@ impl WorkerService {
                         ClusterState {
                             epoch,
                             leader_id,
-                            items,
+                            nodes: items,
                             partitions,
                         },
                     ..

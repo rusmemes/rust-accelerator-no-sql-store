@@ -135,7 +135,7 @@ impl ManagerService {
                         ClusterState {
                             epoch,
                             leader_id,
-                            items,
+                            nodes: items,
                             partitions,
                         },
                     ..

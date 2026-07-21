@@ -67,7 +67,7 @@ async fn get_cluster_state_returns_current_cluster_snapshot() {
 
     assert_eq!(cluster_state.epoch, 3);
     assert_eq!(cluster_state.leader_id, me.id);
-    assert_eq!(cluster_state.items.len(), 2);
+    assert_eq!(cluster_state.nodes.len(), 2);
     assert!(cluster_state.partitions.mapping.is_empty());
     assert!(cluster_state.partitions.old_replicas.is_empty());
 }
@@ -121,7 +121,7 @@ async fn get_cluster_state_returns_worker_items_and_partition_mapping() {
         other => panic!("unexpected output: {:?}", other),
     };
 
-    assert!(cluster_state.items.iter().any(|item| {
+    assert!(cluster_state.nodes.iter().any(|item| {
         item.id == worker_id
             && item.host == "worker.local"
             && item.port == 9100
