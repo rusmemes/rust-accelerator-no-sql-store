@@ -1,6 +1,6 @@
 use crate::common::{now_millis, ClusterState, Config, Heartbeat, Me, Node, NodeType};
 use crate::worker::domain::WorkerProtocol;
-use crate::worker::service::cluster_state::handle_cluster_state;
+use crate::worker::service::cluster_state::{handle_cluster_state, handle_remove_old_partition};
 use crate::worker::service::connection::{handle_new_connection, handle_node_disconnected};
 use crate::worker::service::election::handle_leader;
 use crate::worker::service::heartbeat::{handle_heartbeat, heartbeats};
@@ -13,9 +13,9 @@ use tokio_util::sync::CancellationToken;
 
 mod cluster_state;
 mod connection;
+mod election;
 mod heartbeat;
 mod state;
-mod election;
 
 #[derive(Debug)]
 struct WorkerService {
@@ -82,7 +82,7 @@ impl WorkerService {
                     ..
                 } => handle_heartbeat(output, state, id, ts, &self.me),
                 WorkerProtocol::GetClusterState { .. } => {
-                    tracing::error!("GetClusterState received on the worker {}", self.me.id)
+                    tracing::error!("GetClusterState received on the worker {}", self.me.id);
                 }
                 WorkerProtocol::ClusterState {
                     state:
@@ -98,11 +98,20 @@ impl WorkerService {
                     handle_node_disconnected(state, id, &self.me)
                 }
                 WorkerProtocol::Leader { id, epoch, ts } => {
-                    handle_leader(output, state, id, epoch, ts, &self.me);
+                    handle_leader(output, state, id, epoch, ts, &self.me)
                 }
-                WorkerProtocol::RemoveOldPartition { .. } => {
-                    todo!()
-                }
+                WorkerProtocol::RemoveOldPartition {
+                    id,
+                    replica_id,
+                    partition_id,
+                } => handle_remove_old_partition(
+                    state,
+                    replica_id,
+                    partition_id,
+                    id,
+                    output,
+                    &self.me,
+                ),
             }
         }
         self.tick(output).await
