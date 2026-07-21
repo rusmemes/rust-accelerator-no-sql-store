@@ -93,24 +93,18 @@ impl WorkerService {
                             partitions,
                         },
                     ..
-                } => handle_cluster_state(output, state, epoch, leader_id, items, partitions),
+                } => handle_cluster_state(
+                    output, state, epoch, leader_id, items, partitions, &self.me,
+                ),
                 WorkerProtocol::NodeDisconnected { id } => {
                     handle_node_disconnected(state, id, &self.me)
                 }
                 WorkerProtocol::Leader { id, epoch, ts } => {
                     handle_leader(output, state, id, epoch, ts, &self.me)
                 }
-                WorkerProtocol::RemovePartitionFromReplica {
-                    replica_id,
-                    partition_id,
-                    ..
-                } => handle_remove_old_partition(
-                    state,
-                    replica_id,
-                    partition_id,
-                    output,
-                    &self.me,
-                ),
+                WorkerProtocol::RemovePartitionFromReplica { replica_id, .. } => {
+                    handle_remove_old_partition(state, replica_id, output, &self.me)
+                }
             }
         }
         self.tick(output).await

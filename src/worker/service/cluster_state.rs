@@ -1,6 +1,7 @@
 use crate::common::{ClusterNode, Me, Node, NodeId, NodeType, Partitions};
 use crate::worker::domain::WorkerProtocol;
 use crate::worker::service::state::State;
+use std::collections::HashSet;
 
 pub(super) fn handle_cluster_state(
     output: &mut Vec<WorkerProtocol>,
@@ -9,6 +10,7 @@ pub(super) fn handle_cluster_state(
     leader_id: NodeId,
     items: Vec<ClusterNode>,
     partitions: Partitions,
+    me: &Me,
 ) {
     let accept: bool = if state.epoch.is_none() || state.epoch < Some(epoch) {
         state.epoch = Some(epoch);
@@ -21,7 +23,9 @@ pub(super) fn handle_cluster_state(
     };
 
     if accept {
-        state.partitions = partitions;
+        let (master, secondary) = calc_partitions(partitions, me);
+        state.master_partitions = master;
+        state.secondary_partitions = secondary;
 
         for item in items {
             match item {
@@ -57,24 +61,28 @@ pub(super) fn handle_cluster_state(
     }
 }
 
+fn calc_partitions(partitions: Partitions, me: &Me) -> (HashSet<u16>, HashSet<u16>) {
+
+    let mut master = HashSet::new();
+    let mut secondary = HashSet::new();
+
+    for (id, partition) in partitions.mapping {
+        if partition.master == me.id {
+            master.insert(id);
+        } else if partition.replicas.contains(&me.id) {
+            secondary.insert(id);
+        }
+    }
+
+    (master, secondary)
+}
+
 pub(super) fn handle_remove_old_partition(
     state: &mut State,
     replica_id: NodeId,
-    partition_id: u16,
     output: &mut Vec<WorkerProtocol>,
     me: &Me,
 ) {
-    let remove = state
-        .partitions
-        .old_replicas
-        .get_mut(&partition_id)
-        .map(|old_replicas| old_replicas.remove(&replica_id) && old_replicas.is_empty())
-        .unwrap_or(false);
-
-    if remove {
-        state.partitions.old_replicas.remove(&partition_id);
-    }
-
     if !state.nodes.get(&replica_id).is_none() {
         output.extend(
             state
