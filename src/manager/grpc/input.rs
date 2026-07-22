@@ -1,7 +1,10 @@
 use crate::{
     common::{ClusterNode, ClusterState, Heartbeat, Me, NodeId},
     conversions::{
-        api::v1::{
+        common::v1::{Addr, ClusterState as GrpcClusterState, Node},
+        grpc_node_type_to_domain,
+        grpc_partitions_to_domain,
+        manager_api::v1::{
             manager_event::Payload,
             worker_event,
             Connect as GrpcConnect,
@@ -12,10 +15,7 @@ use crate::{
             VoteRequest as GrpcVoteRequest,
             VoteResponse as GrpcVoteResponse,
             WorkerEvent
-        },
-        common::v1::{Addr, ClusterState as GrpcClusterState, Node},
-        grpc_node_type_to_domain,
-        grpc_partitions_to_domain
+        }
     },
     manager::domain::ManagerProtocol
 };

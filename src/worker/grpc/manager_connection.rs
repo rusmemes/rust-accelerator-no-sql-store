@@ -1,14 +1,14 @@
 use crate::{
     common::{Me, NodeId},
     conversions::{
-        api::v1::{
+        common::v1::Addr,
+        manager_api::v1::{
             manager_api_client::ManagerApiClient,
             worker_event::Payload,
             Connect,
             ConnectResponse,
             WorkerEvent
-        },
-        common::v1::Addr
+        }
     },
     worker::grpc::input::input_from_manager,
     worker::{

@@ -2,17 +2,17 @@ use crate::{
     common,
     common::{ClusterNode, Me, NodeId},
     conversions::{
-        api::v1::{
+        common::v1::{Addr, ClusterState, Node},
+        grpc_node_type_to_domain,
+        grpc_partitions_to_domain,
+        manager_api::v1::{
             worker_event::Payload,
             Connect,
             Heartbeat,
             Leader,
             RemovePartitionFromReplica,
             WorkerEvent
-        },
-        common::v1::{Addr, ClusterState, Node},
-        grpc_node_type_to_domain,
-        grpc_partitions_to_domain
+        }
     },
     worker::domain::WorkerProtocol,
 };

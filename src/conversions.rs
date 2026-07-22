@@ -2,9 +2,15 @@ use crate::common::{NodeType, Partition, Partitions};
 use crate::conversions::common::v1;
 use std::collections::HashMap;
 
-pub mod api {
+pub mod manager_api {
     pub mod v1 {
         tonic::include_proto!("manager_api.v1");
+    }
+}
+
+pub mod worker_api {
+    pub mod v1 {
+        tonic::include_proto!("worker_api.v1");
     }
 }
 

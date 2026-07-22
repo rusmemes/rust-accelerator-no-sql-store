@@ -4,7 +4,7 @@ mod manager_connection;
 mod input;
 
 use crate::common::{CommunicationStreamEither, Config, Me, NodeId};
-use crate::conversions::api::v1::WorkerEvent;
+use crate::conversions::manager_api::v1::WorkerEvent;
 use crate::worker::domain::WorkerProtocol;
 use crate::worker::grpc::output::output;
 use std::collections::HashMap;

@@ -2,8 +2,8 @@ use crate::{
     common::{Heartbeat, Me, NodeId},
     conversions::{
         self,
-        api::v1::{worker_event, RemovePartitionFromReplica, WorkerEvent},
         common::v1::GetState,
+        manager_api::v1::{worker_event, RemovePartitionFromReplica, WorkerEvent},
     },
     worker::{
         domain::WorkerProtocol,
@@ -128,7 +128,7 @@ pub(super) async fn handle_output_heartbeat(
     node_id: NodeId,
     ts: u64,
 ) {
-    let heartbeat = || conversions::api::v1::Heartbeat {
+    let heartbeat = || conversions::manager_api::v1::Heartbeat {
         id: node_id.to_string(),
         ts,
     };

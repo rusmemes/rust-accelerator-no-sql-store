@@ -1,7 +1,8 @@
 use crate::{
     common::{Me, NodeId},
     conversions::{
-        api::v1::{
+        common::v1::Addr,
+        manager_api::v1::{
             manager_api_server::{ManagerApi, ManagerApiServer},
             manager_event::Payload,
             worker_event,
@@ -10,8 +11,7 @@ use crate::{
             ConnectResponse,
             ManagerEvent,
             WorkerEvent
-        },
-        common::v1::Addr
+        }
     },
     manager::domain::ManagerProtocol
 };
