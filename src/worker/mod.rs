@@ -1,6 +1,7 @@
 mod service;
 mod domain;
 mod grpc;
+mod runtime_store;
 
 use crate::common::Config;
 

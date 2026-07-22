@@ -1,11 +1,9 @@
 use super::*;
 use crate::common::now_millis;
 use crate::manager::domain::ManagerProtocol;
-use crate::manager::service::test_support::*;
 use crate::manager::service::State;
+use crate::manager::service::test_support::*;
 use std::collections::{HashMap, HashSet};
-
-const TEST_PARTITIONS_AMOUNT: usize = 4096;
 
 fn expected_master_for(partition: u16, workers: &[NodeId]) -> NodeId {
     workers[partition as usize % workers.len()].clone()
@@ -71,12 +69,12 @@ async fn worker_partitions_recomputes_cluster_partition_mapping_and_broadcasts_c
         ManagerProtocol::ClusterState { recipient_id, state }
             if (recipient_id == &worker_a || recipient_id == &worker_b)
                 && state.nodes.is_empty()
-                && state.partitions.mapping.len() == TEST_PARTITIONS_AMOUNT
+                && state.partitions.mapping.len() == PARTITIONS_AMOUNT
                 && state.partitions.old_replicas.is_empty()
     )));
 
     let state = service.state.as_ref().expect("state exists");
-    assert_eq!(state.partitions.mapping.len(), TEST_PARTITIONS_AMOUNT);
+    assert_eq!(state.partitions.mapping.len(), PARTITIONS_AMOUNT);
     assert!(state.partitions.old_replicas.is_empty());
 
     for partition in [0, 1, 2, 4095] {
@@ -121,7 +119,7 @@ async fn worker_partitions_moves_previous_mapping_to_old_mapping_when_worker_lay
     assert_eq!(output.len(), 2);
     {
         let state = service.state.as_ref().expect("state exists");
-        assert_eq!(state.partitions.mapping.len(), TEST_PARTITIONS_AMOUNT);
+        assert_eq!(state.partitions.mapping.len(), PARTITIONS_AMOUNT);
         assert!(state.partitions.old_replicas.is_empty());
         for partition in [0, 1, 4095] {
             assert_eq!(
@@ -150,9 +148,9 @@ async fn worker_partitions_moves_previous_mapping_to_old_mapping_when_worker_lay
     assert!(output.iter().all(|msg| matches!(
         msg,
         ManagerProtocol::ClusterState { state, .. }
-            if state.partitions.mapping.len() == TEST_PARTITIONS_AMOUNT
+            if state.partitions.mapping.len() == PARTITIONS_AMOUNT
                 && !state.partitions.old_replicas.is_empty()
-                && state.partitions.old_replicas.len() < TEST_PARTITIONS_AMOUNT
+                && state.partitions.old_replicas.len() < PARTITIONS_AMOUNT
     )));
 
     let state = service.state.as_ref().expect("state exists");
@@ -217,7 +215,7 @@ async fn worker_partitions_recomputes_while_old_mapping_is_present_and_merges_tr
 
     assert_eq!(output.len(), 3);
     let state = service.state.as_ref().expect("state exists");
-    assert_eq!(state.partitions.mapping.len(), TEST_PARTITIONS_AMOUNT);
+    assert_eq!(state.partitions.mapping.len(), PARTITIONS_AMOUNT);
     assert_eq!(state.partitions.old_replicas.len(), 1);
     assert_eq!(
         state
