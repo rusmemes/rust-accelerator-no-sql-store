@@ -1,7 +1,7 @@
 use super::*;
 use crate::common::{NodeType, Partition};
 use crate::conversions;
-use crate::conversions::api::v1::Leader;
+use crate::conversions::manager_api::v1::Leader;
 use crate::manager::grpc::test_support::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

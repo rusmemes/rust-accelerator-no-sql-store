@@ -1,5 +1,5 @@
 use crate::common::{CommunicationStreamEither, NodeId};
-use crate::conversions::api::v1::{ManagerEvent, WorkerEvent};
+use crate::conversions::manager_api::v1::{ManagerEvent, WorkerEvent};
 use crate::manager::domain::ManagerProtocol;
 use async_trait::async_trait;
 use std::collections::HashMap;

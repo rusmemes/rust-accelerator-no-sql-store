@@ -1,0 +1,45 @@
+syntax = "proto3";
+import "common.proto";
+
+package worker_api.v1;
+
+service WorkerApi {
+  rpc OpenClientConnection(stream ClientEvent) returns (stream ClientEvent);
+  rpc OpenWorkerConnection(stream WorkerEvent) returns (stream WorkerEvent);
+}
+
+message Connect {
+  string id = 1;
+  common.v1.Addr addr = 2;
+}
+
+message ConnectResponse {
+  string id = 1;
+}
+
+message Record {
+  // todo
+}
+
+message SyncBatchRequest {
+  string id = 1;
+  repeated Record records = 2;
+}
+
+message SyncBatchResponse {
+  string id = 1;
+}
+
+message WorkerEvent {
+  oneof payload {
+    Connect connect = 1;
+    ConnectResponse connect_response = 2;
+    SyncBatchRequest sync_batch_request = 3;
+    SyncBatchResponse sync_batch_response = 4;
+  }
+}
+
+message ClientEvent {
+  
+}
+

@@ -2,10 +2,10 @@ use crate::{
     common::Config,
     common::{ClusterNode, ClusterState, Heartbeat, Me, NodeId, Partitions},
     conversions::{
-        api::v1::{manager_event::Payload, worker_event, Heartbeat as GrpcHeartbeat, Leader as GrpcLeader, ManagerEvent, RemovePartitionFromReplica, VoteRequest as GrpcVoteRequest, VoteResponse as GrpcVoteResponse, WorkerEvent},
         common::v1::{Addr, ClusterState as GrpcClusterState, GetState, Node},
         domain_node_type_to_grpc,
-        domain_partitions_to_grpc
+        domain_partitions_to_grpc,
+        manager_api::v1::{manager_event::Payload, worker_event, Heartbeat as GrpcHeartbeat, Leader as GrpcLeader, ManagerEvent, RemovePartitionFromReplica, VoteRequest as GrpcVoteRequest, VoteResponse as GrpcVoteResponse, WorkerEvent}
     },
     manager::{
         domain::ManagerProtocol,

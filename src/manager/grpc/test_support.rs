@@ -1,6 +1,6 @@
 use super::session::{ManagerIOStream, WorkerIOStream};
 use crate::common::{Me, NodeId};
-use crate::conversions::api::v1::{ManagerEvent, WorkerEvent};
+use crate::conversions::manager_api::v1::{ManagerEvent, WorkerEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};

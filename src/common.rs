@@ -2,6 +2,8 @@ use crate::cli::{Cli, Command};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+pub const PARTITIONS_AMOUNT: usize = 4096;
+
 #[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Hash, Debug)]
 pub struct NodeId(String);
 

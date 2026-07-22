@@ -1,9 +1,7 @@
 use super::State;
-use crate::common::{ClusterState, Me, NodeId, Partition, Partitions};
+use crate::common::{ClusterState, Me, NodeId, PARTITIONS_AMOUNT, Partition, Partitions};
 use crate::manager::domain::ManagerProtocol;
 use std::collections::{BTreeSet, HashSet};
-
-const PARTITIONS_AMOUNT: usize = 4096;
 
 pub(super) fn worker_partitions(
     state: &mut State,

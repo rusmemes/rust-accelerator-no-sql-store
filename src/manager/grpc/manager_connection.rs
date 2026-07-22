@@ -1,15 +1,15 @@
 use crate::{
     common::{Me, NodeId},
     conversions::{
-        api::v1::{
+        common::v1::Addr,
+        manager_api::v1::{
             manager_api_client::ManagerApiClient,
             manager_event::Payload,
             Config,
             Connect,
             ConnectResponse,
             ManagerEvent
-        },
-        common::v1::Addr
+        }
     },
     manager::{
         domain::ManagerProtocol,

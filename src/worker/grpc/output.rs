@@ -1,15 +1,17 @@
+use crate::worker::grpc::worker_connection::new_worker_connection;
+use crate::worker::grpc::ClientApiWorkerIOStream;
 use crate::{
     common::{Heartbeat, Me, NodeId},
     conversions::{
         self,
-        api::v1::{worker_event, RemovePartitionFromReplica, WorkerEvent},
         common::v1::GetState,
+        manager_api::v1::{worker_event, RemovePartitionFromReplica, WorkerEvent},
     },
     worker::{
         domain::WorkerProtocol,
         grpc::manager_connection::new_manager_connection,
-        grpc::session::{IOStreamExt, WorkerIOStream}
-    }
+        grpc::session::{IOStreamExt, WorkerIOStream},
+    },
 };
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -22,6 +24,7 @@ pub(super) async fn output(
     tx: Sender<WorkerProtocol>,
     mut rx: Receiver<WorkerProtocol>,
     manager_sessions: Arc<RwLock<HashMap<NodeId, WorkerIOStream>>>,
+    worker_sessions: Arc<RwLock<HashMap<NodeId, ClientApiWorkerIOStream>>>,
 ) {
     while let Some(message) = rx.recv().await {
         tracing::debug!("output: {:?}", message);
@@ -58,7 +61,7 @@ pub(super) async fn output(
                 if manager {
                     new_manager_connection(&me, &tx, &manager_sessions, host, port).await;
                 } else {
-                    todo!("Connect to another worker")
+                    new_worker_connection(&me, &tx, &worker_sessions, host, port).await;
                 }
             }
             WorkerProtocol::ClusterState { .. } => {
@@ -81,27 +84,21 @@ pub(super) async fn handle_output_remove_partition_from_replica(
     replica_id: NodeId,
     partition_id: u16,
 ) {
-    let remove_partition_from_replica = || RemovePartitionFromReplica {
-        partition_id: partition_id as u32,
-        replica_id: replica_id.to_string(),
-    };
-    let is_manager = manager_sessions.read().await.contains_key(&recipient_id);
-    if is_manager {
-        handle_common(
-            "RemovePartitionFromReplica",
-            || WorkerEvent {
-                payload: Some(worker_event::Payload::RemovePartitionFromReplica(
-                    remove_partition_from_replica(),
-                )),
-            },
-            tx,
-            manager_sessions,
-            recipient_id,
-        )
-        .await;
-    } else {
-        todo!()
-    }
+    handle_common(
+        "RemovePartitionFromReplica",
+        || WorkerEvent {
+            payload: Some(worker_event::Payload::RemovePartitionFromReplica(
+                RemovePartitionFromReplica {
+                    partition_id: partition_id as u32,
+                    replica_id: replica_id.to_string(),
+                },
+            )),
+        },
+        tx,
+        manager_sessions,
+        recipient_id,
+    )
+    .await;
 }
 
 pub(super) async fn handle_output_get_cluster_state(
@@ -128,26 +125,21 @@ pub(super) async fn handle_output_heartbeat(
     node_id: NodeId,
     ts: u64,
 ) {
-    let heartbeat = || conversions::api::v1::Heartbeat {
-        id: node_id.to_string(),
-        ts,
-    };
-
-    let is_manager = manager_sessions.read().await.contains_key(&id);
-    if is_manager {
-        handle_common(
-            "Heartbeat",
-            || WorkerEvent {
-                payload: Some(worker_event::Payload::Heartbeat(heartbeat())),
-            },
-            tx,
-            manager_sessions,
-            id,
-        )
-        .await;
-    } else {
-        todo!()
-    }
+    handle_common(
+        "Heartbeat",
+        || WorkerEvent {
+            payload: Some(worker_event::Payload::Heartbeat(
+                conversions::manager_api::v1::Heartbeat {
+                    id: node_id.to_string(),
+                    ts,
+                },
+            )),
+        },
+        tx,
+        manager_sessions,
+        id,
+    )
+    .await;
 }
 
 pub(super) async fn handle_common<Event, Error, Stream>(
