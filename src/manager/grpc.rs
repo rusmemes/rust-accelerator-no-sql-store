@@ -3,17 +3,17 @@ use crate::{
     conversions::{
         common::v1::Addr,
         manager_api::v1::{
-            manager_api_server::{ManagerApi, ManagerApiServer},
-            manager_event::Payload,
-            worker_event,
             Config,
             Connect,
             ConnectResponse,
             ManagerEvent,
             WorkerEvent
-        }
+            ,
+            manager_api_server::{ManagerApi, ManagerApiServer},
+            manager_event::Payload,
+            worker_event},
     },
-    manager::domain::ManagerProtocol
+    manager::domain::ManagerProtocol,
 };
 use input::{input_from_manager, input_from_worker};
 use manager_connection::new_manager_connection;
@@ -21,12 +21,12 @@ use output::output;
 use session::{ManagerIOStream, WorkerIOStream};
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
-    sync::mpsc::{Receiver, Sender},
     sync::RwLock,
+    sync::mpsc::{Receiver, Sender},
 };
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tonic::{transport::Server, Request, Response, Status, Streaming};
+use tonic::{Request, Response, Status, Streaming, transport::Server};
 
 mod input;
 mod manager_connection;
@@ -215,7 +215,6 @@ pub async fn start_server(
 
     Server::builder()
         .add_service(ManagerApiServer::new(ManagerApiService::new(channel, me, config)))
-        // .add_service(ManagerApiServer::new(ManagerApiService::new(channel, me, config)))
         .serve_with_shutdown(grpc_address, cancellation_token.cancelled())
         .await?;
 
