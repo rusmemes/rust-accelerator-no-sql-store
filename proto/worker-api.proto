@@ -34,6 +34,8 @@ message WorkerEvent {
   oneof payload {
     Connect connect = 1;
     ConnectResponse connect_response = 2;
+    SyncBatchRequest sync_batch_request = 3;
+    SyncBatchResponse sync_batch_response = 4;
   }
 }
 

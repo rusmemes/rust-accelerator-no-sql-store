@@ -3,23 +3,70 @@ use crate::{
     common::{ClusterNode, Me, NodeId},
     conversions::{
         common::v1::{Addr, ClusterState, Node},
-        grpc_node_type_to_domain,
-        grpc_partitions_to_domain,
+        grpc_node_type_to_domain, grpc_partitions_to_domain,
         manager_api::v1::{
-            worker_event::Payload,
-            Connect,
-            Heartbeat,
-            Leader,
-            RemovePartitionFromReplica,
-            WorkerEvent
-        }
+            worker_event::Payload, Connect, Heartbeat, Leader, RemovePartitionFromReplica,
+            WorkerEvent,
+        },
     },
     worker::domain::WorkerProtocol,
 };
 
+use crate::conversions::worker_api;
+use crate::conversions::worker_api::v1::{worker_event, WorkerEvent as ClientApiWorkerEvent};
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
 use tonic::Status;
+
+pub(super) async fn input_from_worker<S>(
+    mut input: S,
+    id: &NodeId,
+    host: String,
+    port: u32,
+    tx: Sender<WorkerProtocol>,
+) where
+    S: tokio_stream::Stream<Item = Result<ClientApiWorkerEvent, Status>> + Unpin,
+{
+    if tx
+        .send(WorkerProtocol::NewConnection {
+            id: Some(id.clone()),
+            host,
+            port,
+            manager: false,
+        })
+        .await
+        .is_ok()
+    {
+        tracing::info!("Worker with ID {} is connected", id);
+        while let Some(Ok(ClientApiWorkerEvent {
+            payload: Some(payload),
+        })) = input.next().await
+        {
+            match payload {
+                worker_event::Payload::SyncBatchRequest(_) => {
+                    todo!()
+                }
+                worker_event::Payload::SyncBatchResponse(_) => {
+                    todo!()
+                }
+                worker_event::Payload::Connect(worker_api::v1::Connect {
+                    id: request_id, ..
+                }) => {
+                    tracing::error!(
+                        "Received duplicated connect request from {}: id {}",
+                        id,
+                        request_id
+                    );
+                    break;
+                }
+                worker_event::Payload::ConnectResponse(_) => {
+                    tracing::error!("ConnectResponse is not expected to be received");
+                    break;
+                }
+            }
+        }
+    }
+}
 
 pub(super) async fn input_from_manager<S>(
     mut input: S,
