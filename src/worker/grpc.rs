@@ -5,7 +5,7 @@ mod session;
 mod worker_connection;
 
 use crate::{
-    common::{CommunicationStreamEither, Config, Me, NodeId},
+    common::{CommunicationStreamEither, Me, NodeId},
     conversions::{
         common::v1::Addr,
         manager_api::v1::WorkerEvent,
