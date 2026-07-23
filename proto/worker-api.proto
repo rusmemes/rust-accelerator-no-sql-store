@@ -20,6 +20,7 @@ message ConnectResponse {
 message Record {
   uint64 key = 1;
   bytes value = 2;
+  uint64 ttl = 3;
 }
 
 message SyncBatchRequest {
@@ -28,7 +29,8 @@ message SyncBatchRequest {
 }
 
 message SyncBatchResponse {
-  string id = 1;
+  string sync_batch_request_id = 1;
+  bool applied = 2;
 }
 
 message WorkerEvent {
@@ -47,16 +49,16 @@ enum RequestType {
 }
 
 message Request {
-  RequestType request_type = 1;
-  uint64 key = 2;
-  optional bytes value = 3;
-  optional uint64 ttl = 4;
+  int32 id = 1;
+  RequestType request_type = 2;
+  uint64 key = 3;
+  optional bytes value = 4;
+  optional uint64 ttl = 5;
 }
 
 message Response {
-  RequestType request_type = 1;
-  uint64 key = 2;
-  optional bytes value = 3;
+  int32 request_id = 1;
+  optional bytes value = 2;
 }
 
 message ClientEvent {
