@@ -110,7 +110,7 @@ impl WorkerService {
                     handle_remove_old_partition(state, replica_id, output, &self.me)
                 }
                 WorkerProtocol::SyncBatch { request, .. } => {
-                    handle_sync_batch(state, output, request, &self.runtime_store);
+                    handle_sync_batch(state, output, &request, &self.runtime_store);
                 }
             }
         }

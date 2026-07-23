@@ -4,6 +4,7 @@ use crate::worker::domain::{SyncBatchRequest, WorkerProtocol};
 use crate::worker::runtime_store::RuntimeStore;
 use crate::worker::service::state::State;
 use std::collections::HashSet;
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub(super) fn handle_cluster_state(
@@ -66,7 +67,6 @@ pub(super) fn handle_cluster_state(
 }
 
 fn calc_partitions(partitions: &Partitions, me: &Me) -> (HashSet<u16>, HashSet<u16>) {
-
     let mut master = HashSet::new();
     let mut secondary = HashSet::new();
 
@@ -101,7 +101,7 @@ pub(super) fn handle_remove_old_partition(
 pub fn handle_sync_batch(
     state: &mut State,
     output: &mut Vec<WorkerProtocol>,
-    sync_batch_request: SyncBatchRequest,
+    sync_batch_request: &SyncBatchRequest,
     runtime_store: &RuntimeStore,
 ) {
     todo!()
@@ -130,11 +130,10 @@ pub fn sync_partitions(
                 })
                 .collect::<Vec<_>>();
 
-            let request_id = Uuid::new_v4().to_string();
-            let request = domain::SyncBatchRequest {
-                id: request_id.clone(),
+            let request = Arc::new(SyncBatchRequest {
+                id: Uuid::new_v4().to_string(),
                 records,
-            };
+            });
 
             // todo: memorize
 
