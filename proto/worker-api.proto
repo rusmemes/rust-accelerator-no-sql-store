@@ -48,7 +48,7 @@ enum RequestType {
   Delete = 2;
 }
 
-message Request {
+message ClientRequest {
   int32 id = 1;
   RequestType request_type = 2;
   uint64 key = 3;
@@ -56,14 +56,14 @@ message Request {
   optional uint64 ttl = 5;
 }
 
-message Response {
+message WorkerResponse {
   int32 request_id = 1;
   optional bytes value = 2;
 }
 
 message ClientEvent {
   oneof payload {
-    Request request = 1;
-    Response response = 2;
+    ClientRequest request = 1;
+    WorkerResponse response = 2;
   }
 }
