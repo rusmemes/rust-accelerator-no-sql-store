@@ -6,6 +6,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct Record {
     pub expiration_time_ms: u64,
+    pub creation_time_ms: u64,
     pub value: Vec<u8>,
 }
 
@@ -96,16 +97,27 @@ impl RuntimeStore {
         res
     }
 
-    pub fn put(&self, key: u64, value: Vec<u8>, expiration_time_ms: u64) {
+    pub fn put(&self, key: u64, value: Vec<u8>, expiration_time_ms: u64, creation_time_ms: u64) {
         let partition = (key as usize % PARTITIONS_AMOUNT) as u16;
         let map = self.cache.entry(partition).or_default();
-        map.insert(
-            key,
-            Arc::new(Record {
-                expiration_time_ms,
-                value,
-            }),
-        );
+        match map.entry(key) {
+            dashmap::mapref::entry::Entry::Occupied(mut occupied) => {
+                if occupied.get().creation_time_ms <= creation_time_ms {
+                    occupied.insert(Arc::new(Record {
+                        expiration_time_ms,
+                        creation_time_ms,
+                        value,
+                    }));
+                }
+            }
+            dashmap::mapref::entry::Entry::Vacant(occupied) => {
+                occupied.insert(Arc::new(Record {
+                    expiration_time_ms,
+                    creation_time_ms,
+                    value,
+                }));
+            }
+        }
     }
 }
 
@@ -121,7 +133,7 @@ mod tests {
         let value = vec![1, 2, 3];
 
         let now = now_millis();
-        store.put(key, value.clone(), now + 100);
+        store.put(key, value.clone(), now + 100, now);
 
         let record = store.get(key).expect("Record should be present");
         assert_eq!(record.value, value);
@@ -140,7 +152,8 @@ mod tests {
         let key = 1u64;
         let partition = (key as usize % PARTITIONS_AMOUNT) as u16;
 
-        store.put(key, vec![1], now_millis() + 1000);
+        let now = now_millis();
+        store.put(key, vec![1], now + 1000, now);
         assert!(store.cache.contains_key(&partition));
 
         store.remove_partition_if_empty(partition);
@@ -158,12 +171,31 @@ mod tests {
         let key = 1u64;
         let partition = (key as usize % PARTITIONS_AMOUNT) as u16;
 
-        store.put(key, vec![1, 2, 3], 0);
+        store.put(key, vec![1, 2, 3], 0, 0);
         assert!(store.cache.contains_key(&partition));
         assert!(store.get(key).is_some());
 
         store.delete(key);
         assert!(store.get(key).is_none());
         assert!(!store.cache.contains_key(&partition));
+    }
+
+    #[test]
+    fn test_runtime_store_put_ordering() {
+        let store = RuntimeStore::new();
+        let key = 1u64;
+
+        store.put(key, vec![1], 0, 100);
+        assert_eq!(store.get(key).unwrap().value, vec![1]);
+
+        store.put(key, vec![2], 0, 50);
+        assert_eq!(store.get(key).unwrap().value, vec![1]);
+
+        store.put(key, vec![3], 0, 150);
+        // Должна обновиться
+        assert_eq!(store.get(key).unwrap().value, vec![3]);
+
+        store.put(key, vec![4], 0, 150);
+        assert_eq!(store.get(key).unwrap().value, vec![4]);
     }
 }

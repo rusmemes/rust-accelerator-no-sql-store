@@ -127,6 +127,7 @@ pub fn sync_partitions(
                     key,
                     value: record.value.clone(),
                     ttl: record.expiration_time_ms,
+                    creation_time_ms: record.creation_time_ms,
                 })
                 .collect::<Vec<_>>();
 

@@ -113,9 +113,10 @@ impl WorkerApi for WorkerApiService {
                             request_type,
                             key,
                             value: Some(bytes),
-                            ttl
+                            ttl,
+                            creation_time: Some(creation_time_ms),
                         } if request_type == RequestType::Put as i32 => {
-                            runtime_store.put(key, bytes, ttl.unwrap_or(0));
+                            runtime_store.put(key, bytes, ttl.unwrap_or(0), creation_time_ms);
                             (id, None)
                         },
                         ClientRequest {

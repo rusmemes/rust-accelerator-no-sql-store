@@ -49,5 +49,6 @@ pub struct SyncBatchRequest {
 pub struct Record {
     pub key: u64,
     pub value: Vec<u8>,
-    pub ttl: u64
+    pub ttl: u64,
+    pub creation_time_ms: u64,
 }
