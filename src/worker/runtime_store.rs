@@ -1,5 +1,6 @@
 use crate::common::{PARTITIONS_AMOUNT, now_millis};
 use dashmap::DashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -23,6 +24,31 @@ impl RuntimeStore {
 }
 
 impl RuntimeStore {
+    pub fn get_partition_records(&self, partition: u16, amount: usize) -> Vec<(u64, Arc<Record>)> {
+        if let Some(entry) = self.cache.get(&partition) {
+            return entry
+                .value()
+                .iter()
+                .take(amount)
+                .map(|entry| (*entry.key(), entry.value().clone()))
+                .collect();
+        }
+        vec![]
+    }
+
+    pub fn unexpected_partitions(&self, expected: &HashSet<u16>) -> Vec<u16> {
+        self.cache
+            .iter()
+            .filter_map(|entry| {
+                if expected.contains(entry.key()) || entry.value().is_empty() {
+                    None
+                } else {
+                    Some(*entry.key())
+                }
+            })
+            .collect()
+    }
+
     pub fn remove_partition_if_empty(&self, partition: u16) {
         if let dashmap::mapref::entry::Entry::Occupied(occupied) = self.cache.entry(partition)
             && occupied.get().is_empty()

@@ -32,4 +32,21 @@ pub enum WorkerProtocol {
         replica_id: NodeId,
         partition_id: u16,
     },
+    SyncBatch {
+        recipient_id: NodeId,
+        request: SyncBatchRequest,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncBatchRequest {
+    pub id: String,
+    pub records: Vec<Record>
+}
+
+#[derive(Debug, Clone)]
+pub struct Record {
+    pub key: u64,
+    pub value: Vec<u8>,
+    pub ttl: u64
 }
