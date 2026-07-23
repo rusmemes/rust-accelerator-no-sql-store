@@ -31,21 +31,43 @@ impl RuntimeStore {
         }
     }
 
+    pub fn delete(&self, key: u64) {
+        let partition = (key as usize % PARTITIONS_AMOUNT) as u16;
+        let removed = if let Some(map) = self.cache.get(&partition) {
+            map.remove(&key).is_some()
+        } else {
+            false
+        };
+
+        if removed {
+            self.remove_partition_if_empty(partition);
+        }
+    }
+
     pub fn get(&self, key: u64) -> Option<Arc<Record>> {
         let partition = (key as usize % PARTITIONS_AMOUNT) as u16;
-        let map = self.cache.get(&partition)?;
 
-        match map.entry(key) {
-            dashmap::mapref::entry::Entry::Occupied(occupied) => {
-                if occupied.get().expiration_time_ms > now_millis() {
-                    Some(occupied.get().clone())
-                } else {
-                    occupied.remove();
-                    None
+        let (res, removed) = if let Some(map) = self.cache.get(&partition) {
+            match map.entry(key) {
+                dashmap::mapref::entry::Entry::Occupied(occupied) => {
+                    let exp_time = occupied.get().expiration_time_ms;
+                    if exp_time == 0 || exp_time > now_millis() {
+                        (Some(occupied.get().clone()), false)
+                    } else {
+                        occupied.remove();
+                        (None, true)
+                    }
                 }
+                dashmap::mapref::entry::Entry::Vacant(_) => (None, false),
             }
-            dashmap::mapref::entry::Entry::Vacant(_) => None,
+        } else {
+            (None, false)
+        };
+
+        if res.is_none() && removed {
+            self.remove_partition_if_empty(partition);
         }
+        res
     }
 
     pub fn put(&self, key: u64, value: Vec<u8>, expiration_time_ms: u64) {
@@ -83,8 +105,7 @@ mod tests {
         assert!(store.get(key).is_none());
 
         let partition = (key as usize % PARTITIONS_AMOUNT) as u16;
-        let map = store.cache.get(&partition).unwrap();
-        assert!(!map.contains_key(&key));
+        assert!(!store.cache.contains_key(&partition));
     }
 
     #[test]
@@ -102,12 +123,21 @@ mod tests {
         std::thread::sleep(Duration::from_millis(1100));
         assert!(store.get(key).is_none());
 
-        {
-            let map = store.cache.get(&partition).expect("Partition should exist");
-            assert!(map.is_empty());
-        }
+        assert!(!store.cache.contains_key(&partition));
+    }
 
-        store.remove_partition_if_empty(partition);
+    #[test]
+    fn test_runtime_store_delete() {
+        let store = RuntimeStore::new();
+        let key = 1u64;
+        let partition = (key as usize % PARTITIONS_AMOUNT) as u16;
+
+        store.put(key, vec![1, 2, 3], 0);
+        assert!(store.cache.contains_key(&partition));
+        assert!(store.get(key).is_some());
+
+        store.delete(key);
+        assert!(store.get(key).is_none());
         assert!(!store.cache.contains_key(&partition));
     }
 }
