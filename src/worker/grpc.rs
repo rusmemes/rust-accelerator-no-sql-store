@@ -9,11 +9,22 @@ use crate::{
     conversions::{
         common::v1::Addr,
         manager_api::v1::WorkerEvent,
-        worker_api::v1::{
-            worker_api_server::WorkerApi, worker_event, ClientEvent, Connect,
-            ConnectResponse, WorkerEvent as ClientApiWorkerEvent,
-        },
+        worker_api::
+        v1::{
+            ClientEvent,
+            ClientRequest,
+            Connect,
+            ConnectResponse,
+            RequestType,
+            WorkerEvent as ClientApiWorkerEvent,
+            WorkerResponse,
+            client_event::Payload,
+            worker_api_server::WorkerApi,
+            worker_event,
+        }
+        ,
     },
+    worker::runtime_store::RuntimeStore,
     worker::{
         domain::WorkerProtocol,
         grpc::{input::input_from_worker, output::output},
@@ -21,8 +32,8 @@ use crate::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::RwLock;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 
@@ -43,10 +54,15 @@ pub struct WorkerApiService {
     me: Me,
     worker_sessions: Arc<RwLock<HashMap<NodeId, ClientApiWorkerIOStream>>>,
     tx: Sender<WorkerProtocol>,
+    runtime_store: RuntimeStore,
 }
 
 impl WorkerApiService {
-    pub fn new((tx, rx): (Sender<WorkerProtocol>, Receiver<WorkerProtocol>), me: Me) -> Self {
+    pub fn new(
+        (tx, rx): (Sender<WorkerProtocol>, Receiver<WorkerProtocol>),
+        me: Me,
+        runtime_store: RuntimeStore,
+    ) -> Self {
         let worker_sessions: Arc<RwLock<HashMap<NodeId, ClientApiWorkerIOStream>>> =
             Default::default();
         let worker_sessions_clone = worker_sessions.clone();
@@ -55,6 +71,7 @@ impl WorkerApiService {
             me: me.clone(),
             worker_sessions,
             tx,
+            runtime_store,
         };
         tokio::spawn(output(
             me.clone(),
@@ -75,7 +92,65 @@ impl WorkerApi for WorkerApiService {
         &self,
         request: Request<Streaming<ClientEvent>>,
     ) -> Result<Response<Self::OpenClientConnectionStream>, Status> {
-        todo!()
+        tracing::info!("Received open_client_connection request");
+
+        let mut input_stream: Streaming<ClientEvent> = request.into_inner();
+        let (grpc_tx, rx): (
+            Sender<Result<ClientEvent, Status>>,
+            Receiver<Result<ClientEvent, Status>>,
+        ) = tokio::sync::mpsc::channel(GRPC_CONNECTION_CHANNEL_BUFFER_SIZE);
+
+        let runtime_store = self.runtime_store.clone();
+        tokio::spawn(async move {
+            while let Ok(Some(event)) = input_stream.message().await {
+                if let ClientEvent {
+                    payload: Some(Payload::Request(request)),
+                } = event
+                {
+                    let (request_id, value) = match request {
+                        ClientRequest {
+                            id,
+                            request_type,
+                            key,
+                            value: Some(bytes),
+                            ttl,
+                            creation_time: Some(creation_time_ms),
+                        } if request_type == RequestType::Put as i32 => {
+                            runtime_store.put(key, bytes, ttl.unwrap_or(0), creation_time_ms);
+                            (id, None)
+                        },
+                        ClientRequest {
+                            id,
+                            request_type,
+                            key,
+                            ..
+                        } if request_type == RequestType::Delete as i32 => {
+                            runtime_store.delete(key);
+                            (id, None)
+                        },
+                        ClientRequest {
+                            id,
+                            key,
+                            ..
+                        } /* considered as Get request */ => {
+                            let option = runtime_store.get(key);
+                            (id, option.map(|r| r.value.clone()))
+                        },
+                    };
+
+                    if let Err(e) = grpc_tx
+                        .send(Ok(ClientEvent {
+                            payload: Some(Payload::Response(WorkerResponse { request_id, value })),
+                        }))
+                        .await
+                    {
+                        tracing::error!("Failed to send response: {:?}", e);
+                    }
+                }
+            }
+        });
+
+        Ok(Response::new(ReceiverStream::new(rx)))
     }
 
     type OpenWorkerConnectionStream = OpenWorkerConnectionStream;

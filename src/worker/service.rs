@@ -1,6 +1,7 @@
-use crate::common::{now_millis, ClusterState, Config, Heartbeat, Me, Node, NodeType};
+use crate::common::{ClusterState, Config, Heartbeat, Me, Node, NodeType, now_millis};
 use crate::worker::domain::WorkerProtocol;
-use crate::worker::service::cluster_state::{handle_cluster_state, handle_remove_old_partition};
+use crate::worker::runtime_store::RuntimeStore;
+use crate::worker::service::cluster_state::{handle_cluster_state, handle_remove_old_partition, handle_sync_batch, sync_partitions};
 use crate::worker::service::connection::{handle_new_connection, handle_node_disconnected};
 use crate::worker::service::election::handle_leader;
 use crate::worker::service::heartbeat::{handle_heartbeat, heartbeats};
@@ -17,19 +18,20 @@ mod election;
 mod heartbeat;
 mod state;
 
-#[derive(Debug)]
 struct WorkerService {
     me: Me,
     state: Option<State>,
     config: Config,
+    runtime_store: RuntimeStore,
 }
 
 impl WorkerService {
-    pub fn new(me: Me, config: Config) -> Self {
+    pub fn new(me: Me, config: Config, runtime_store: RuntimeStore) -> Self {
         Self {
             me,
             state: Default::default(),
             config,
+            runtime_store,
         }
     }
 
@@ -46,10 +48,12 @@ impl WorkerService {
                     node_type: NodeType::Worker,
                 },
             );
+
             let (host, port) = self
                 .config
                 .manager_host_port()
                 .expect("Worker cannot run without connection options");
+
             output.push(WorkerProtocol::NewConnection {
                 id: None,
                 host: host.clone(),
@@ -63,7 +67,7 @@ impl WorkerService {
     async fn tick(&mut self, output: &mut Vec<WorkerProtocol>) {
         if let Some(state) = self.state.as_mut() {
             heartbeats(state, output, &self.me);
-            // TODO: work on state
+            sync_partitions(state, output, &self.runtime_store);
         }
         tracing::debug!("state: {:?}", self.state);
     }
@@ -105,6 +109,9 @@ impl WorkerService {
                 WorkerProtocol::RemovePartitionFromReplica { replica_id, .. } => {
                     handle_remove_old_partition(state, replica_id, output, &self.me)
                 }
+                WorkerProtocol::SyncBatch { request, .. } => {
+                    handle_sync_batch(state, output, &request, &self.runtime_store);
+                }
             }
         }
         self.tick(output).await
@@ -120,8 +127,9 @@ pub async fn start_service(
     config: Config,
     (tx, mut rx): (Sender<WorkerProtocol>, Receiver<WorkerProtocol>),
     cancellation_token: CancellationToken,
+    runtime_store: RuntimeStore,
 ) {
-    let mut service = WorkerService::new(me, config);
+    let mut service = WorkerService::new(me, config, runtime_store);
     for msg in service.get_init_messages().await {
         if let Err(e) = tx.send(msg).await {
             tracing::error!("Error sending response: {}", e);

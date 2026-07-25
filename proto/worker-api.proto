@@ -18,7 +18,10 @@ message ConnectResponse {
 }
 
 message Record {
-  // todo
+  uint64 key = 1;
+  bytes value = 2;
+  uint64 ttl = 3;
+  uint64 creation_time = 4;
 }
 
 message SyncBatchRequest {
@@ -27,7 +30,8 @@ message SyncBatchRequest {
 }
 
 message SyncBatchResponse {
-  string id = 1;
+  string sync_batch_request_id = 1;
+  bool applied = 2;
 }
 
 message WorkerEvent {
@@ -39,7 +43,29 @@ message WorkerEvent {
   }
 }
 
-message ClientEvent {
-  
+enum RequestType {
+  Get = 0;
+  Put = 1;
+  Delete = 2;
 }
 
+message ClientRequest {
+  int32 id = 1;
+  RequestType request_type = 2;
+  uint64 key = 3;
+  optional uint64 creation_time = 4;
+  optional bytes value = 5;
+  optional uint64 ttl = 6;
+}
+
+message WorkerResponse {
+  int32 request_id = 1;
+  optional bytes value = 2;
+}
+
+message ClientEvent {
+  oneof payload {
+    ClientRequest request = 1;
+    WorkerResponse response = 2;
+  }
+}

@@ -1,11 +1,11 @@
-use crate::worker::grpc::worker_connection::new_worker_connection;
 use crate::worker::grpc::ClientApiWorkerIOStream;
+use crate::worker::grpc::worker_connection::new_worker_connection;
 use crate::{
     common::{Heartbeat, Me, NodeId},
     conversions::{
         self,
         common::v1::GetState,
-        manager_api::v1::{worker_event, RemovePartitionFromReplica, WorkerEvent},
+        manager_api::v1::{RemovePartitionFromReplica, WorkerEvent, worker_event},
     },
     worker::{
         domain::WorkerProtocol,
@@ -16,8 +16,8 @@ use crate::{
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
-use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::RwLock;
+use tokio::sync::mpsc::{Receiver, Sender};
 
 pub(super) async fn output(
     me: Me,
@@ -29,6 +29,9 @@ pub(super) async fn output(
     while let Some(message) = rx.recv().await {
         tracing::debug!("output: {:?}", message);
         match message {
+            WorkerProtocol::SyncBatch { .. } => {
+                todo!()
+            }
             WorkerProtocol::RemovePartitionFromReplica {
                 id,
                 replica_id,

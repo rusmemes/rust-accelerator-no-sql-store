@@ -1,4 +1,5 @@
 use crate::common::{ClusterState, Heartbeat, NodeId};
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub enum WorkerProtocol {
@@ -32,4 +33,22 @@ pub enum WorkerProtocol {
         replica_id: NodeId,
         partition_id: u16,
     },
+    SyncBatch {
+        recipient_id: NodeId,
+        request: Arc<SyncBatchRequest>,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncBatchRequest {
+    pub id: String,
+    pub records: Vec<Record>
+}
+
+#[derive(Debug, Clone)]
+pub struct Record {
+    pub key: u64,
+    pub value: Vec<u8>,
+    pub ttl: u64,
+    pub creation_time_ms: u64,
 }
