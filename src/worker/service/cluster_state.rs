@@ -132,7 +132,8 @@ pub fn sync_partitions(
                 right_nodes.insert(&partition.master);
                 right_nodes.extend(partition.replicas.iter());
 
-                let records = runtime_store.get_partition_records(partition_id, 1000);
+                const PARTITION_SYNC_BATCH_SIZE: usize = 1000;
+                let records = runtime_store.get_partition_records(partition_id, PARTITION_SYNC_BATCH_SIZE);
 
                 let records = records
                     .into_iter()
