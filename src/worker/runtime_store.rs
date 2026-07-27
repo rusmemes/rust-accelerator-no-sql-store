@@ -204,10 +204,111 @@ mod tests {
         assert_eq!(store.get(key).unwrap().value, vec![1]);
 
         store.put(key, vec![3], 0, 150);
-        // Должна обновиться
+
         assert_eq!(store.get(key).unwrap().value, vec![3]);
 
         store.put(key, vec![4], 0, 150);
         assert_eq!(store.get(key).unwrap().value, vec![4]);
+    }
+
+    #[test]
+    fn test_remove_from_partition() {
+        let store = RuntimeStore::new();
+        let key1 = 1u64;
+        let key2 = (PARTITIONS_AMOUNT + 1) as u64; // Тот же раздел, что и key1
+        let partition = (key1 as usize % PARTITIONS_AMOUNT) as u16;
+
+        store.put(key1, vec![1], 0, 0);
+        store.put(key2, vec![2], 0, 0);
+
+        assert!(store.cache.contains_key(&partition));
+
+        store.remove_from_partition(partition, &[key1]);
+        assert!(store.get(key1).is_none());
+        assert!(store.get(key2).is_some());
+        assert!(store.cache.contains_key(&partition));
+
+        store.remove_from_partition(partition, &[key2]);
+        assert!(store.get(key2).is_none());
+        assert!(!store.cache.contains_key(&partition));
+    }
+
+    #[test]
+    fn test_get_partition_records() {
+        let store = RuntimeStore::new();
+        let key1 = 1u64;
+        let key2 = (PARTITIONS_AMOUNT + 1) as u64;
+        let partition = (key1 as usize % PARTITIONS_AMOUNT) as u16;
+
+        store.put(key1, vec![1], 0, 0);
+        store.put(key2, vec![2], 0, 0);
+
+        let records = store.get_partition_records(partition, 10);
+        assert_eq!(records.len(), 2);
+        let keys: HashSet<u64> = records.iter().map(|(k, _)| *k).collect();
+        assert!(keys.contains(&key1));
+        assert!(keys.contains(&key2));
+
+        let records_limited = store.get_partition_records(partition, 1);
+        assert_eq!(records_limited.len(), 1);
+    }
+
+    #[test]
+    fn test_unexpected_partitions() {
+        let store = RuntimeStore::new();
+        let key1 = 1u64;
+        let key2 = 2u64;
+        let p1 = (key1 as usize % PARTITIONS_AMOUNT) as u16;
+        let p2 = (key2 as usize % PARTITIONS_AMOUNT) as u16;
+
+        store.put(key1, vec![1], 0, 0);
+        store.put(key2, vec![2], 0, 0);
+
+        let expected = HashSet::from([p1]);
+        let unexpected = store.unexpected_partitions(&expected);
+        assert_eq!(unexpected, vec![p2]);
+
+        let expected_both = HashSet::from([p1, p2]);
+        assert!(store.unexpected_partitions(&expected_both).is_empty());
+    }
+
+    #[test]
+    fn test_runtime_store_no_expiration() {
+        let store = RuntimeStore::new();
+        let key = 1u64;
+        let now = now_millis();
+
+        store.put(key, vec![1], 0, now);
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(store.get(key).is_some());
+    }
+
+    #[test]
+    fn test_runtime_store_concurrent_ops() {
+        let store = Arc::new(RuntimeStore::new());
+        let mut handles = vec![];
+
+        for i in 0..100 {
+            let store_clone = store.clone();
+            handles.push(std::thread::spawn(move || {
+                for j in 0..1000 {
+                    let key = (i * 1000 + j) as u64;
+                    store_clone.put(key, vec![1], 0, 0);
+                    if j % 2 == 0 {
+                        store_clone.delete(key);
+                    }
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let mut total_count = 0;
+        for i in 0..PARTITIONS_AMOUNT {
+            total_count += store.get_partition_records(i as u16, 10000).len();
+        }
+        assert_eq!(total_count, 50000);
     }
 }
