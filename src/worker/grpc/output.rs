@@ -1,3 +1,7 @@
+use crate::conversions::worker_api;
+use crate::conversions::worker_api::v1::worker_event::Payload::{SyncBatchRequest, SyncBatchResponse};
+use crate::conversions::worker_api::v1::Record;
+use crate::worker::domain;
 use crate::worker::grpc::ClientApiWorkerIOStream;
 use crate::worker::grpc::worker_connection::new_worker_connection;
 use crate::{
@@ -6,6 +10,7 @@ use crate::{
         self,
         common::v1::GetState,
         manager_api::v1::{RemovePartitionFromReplica, WorkerEvent, worker_event},
+        worker_api::v1::WorkerEvent as ClientApiWorkerEvent,
     },
     worker::{
         domain::WorkerProtocol,
@@ -29,8 +34,17 @@ pub(super) async fn output(
     while let Some(message) = rx.recv().await {
         tracing::debug!("output: {:?}", message);
         match message {
-            WorkerProtocol::SyncBatch { .. } => {
-                todo!()
+            WorkerProtocol::SyncBatchResponse {
+                recipient_id,
+                request_id,
+            } => {
+                handle_sync_batch_response(&tx, &worker_sessions, recipient_id, request_id).await;
+            }
+            WorkerProtocol::SyncBatch {
+                recipient_id,
+                request,
+            } => {
+                handle_sync_batch(&tx, &worker_sessions, recipient_id, request).await;
             }
             WorkerProtocol::RemovePartitionFromReplica {
                 id,
@@ -78,6 +92,54 @@ pub(super) async fn output(
             }
         }
     }
+}
+
+async fn handle_sync_batch(
+    tx: &Sender<WorkerProtocol>,
+    worker_sessions: &Arc<RwLock<HashMap<NodeId, ClientApiWorkerIOStream>>>,
+    recipient_id: NodeId,
+    request: Arc<domain::SyncBatchRequest>,
+) {
+    handle_common(
+        "SyncBatch",
+        || ClientApiWorkerEvent {
+            payload: Some(SyncBatchRequest(worker_api::v1::SyncBatchRequest {
+                id: request.request_id.clone(),
+                records: request.records.iter().map(|r| {
+                    Record {
+                        key: r.key,
+                        value: r.value.clone(),
+                        ttl: r.ttl,
+                        creation_time: r.creation_time_ms,
+                    }
+                }).collect(),
+            })),
+        },
+        tx,
+        worker_sessions,
+        recipient_id,
+    ).await;
+}
+
+async fn handle_sync_batch_response(
+    tx: &Sender<WorkerProtocol>,
+    worker_sessions: &Arc<RwLock<HashMap<NodeId, ClientApiWorkerIOStream>>>,
+    recipient_id: NodeId,
+    request_id: String,
+) {
+    handle_common(
+        "SyncBatchResponse",
+        || ClientApiWorkerEvent {
+            payload: Some(SyncBatchResponse(worker_api::v1::SyncBatchResponse {
+                sync_batch_request_id: request_id,
+                applied: true,
+            })),
+        },
+        tx,
+        worker_sessions,
+        recipient_id,
+    )
+    .await;
 }
 
 pub(super) async fn handle_output_remove_partition_from_replica(

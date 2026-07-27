@@ -5,15 +5,19 @@ use crate::{
         common::v1::{Addr, ClusterState, Node},
         grpc_node_type_to_domain, grpc_partitions_to_domain,
         manager_api::v1::{
-            worker_event::Payload, Connect, Heartbeat, Leader, RemovePartitionFromReplica,
-            WorkerEvent,
+            Connect, Heartbeat, Leader, RemovePartitionFromReplica, WorkerEvent,
+            worker_event::Payload,
         },
     },
     worker::domain::WorkerProtocol,
 };
+use std::sync::Arc;
 
 use crate::conversions::worker_api;
-use crate::conversions::worker_api::v1::{worker_event, WorkerEvent as ClientApiWorkerEvent};
+use crate::conversions::worker_api::v1::{
+    SyncBatchRequest, SyncBatchResponse, WorkerEvent as ClientApiWorkerEvent, worker_event,
+};
+use crate::worker::domain;
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
 use tonic::Status;
@@ -24,6 +28,7 @@ pub(super) async fn input_from_worker<S>(
     host: String,
     port: u32,
     tx: Sender<WorkerProtocol>,
+    me: &Me,
 ) where
     S: tokio_stream::Stream<Item = Result<ClientApiWorkerEvent, Status>> + Unpin,
 {
@@ -43,11 +48,45 @@ pub(super) async fn input_from_worker<S>(
         })) = input.next().await
         {
             match payload {
-                worker_event::Payload::SyncBatchRequest(_) => {
-                    todo!()
+                worker_event::Payload::SyncBatchRequest(SyncBatchRequest {
+                    id: request_id,
+                    records,
+                }) => {
+                    if let Err(e) = tx
+                        .send(WorkerProtocol::SyncBatch {
+                            recipient_id: me.id.clone(),
+                            request: Arc::new(domain::SyncBatchRequest {
+                                sender_id: id.clone(),
+                                request_id,
+                                records: records
+                                    .iter()
+                                    .map(|r| domain::Record {
+                                        key: r.key,
+                                        value: r.value.clone(),
+                                        ttl: r.ttl,
+                                        creation_time_ms: r.creation_time,
+                                    })
+                                    .collect(),
+                            }),
+                        })
+                        .await
+                    {
+                        tracing::error!("Failed to process SyncBatch: {}", e);
+                    }
                 }
-                worker_event::Payload::SyncBatchResponse(_) => {
-                    todo!()
+                worker_event::Payload::SyncBatchResponse(SyncBatchResponse {
+                    sync_batch_request_id: request_id,
+                    ..
+                }) => {
+                    if let Err(e) = tx
+                        .send(WorkerProtocol::SyncBatchResponse {
+                            recipient_id: id.clone(),
+                            request_id,
+                        })
+                        .await
+                    {
+                        tracing::error!("Failed to process SyncBatchResponse: {}", e);
+                    }
                 }
                 worker_event::Payload::Connect(worker_api::v1::Connect {
                     id: request_id, ..

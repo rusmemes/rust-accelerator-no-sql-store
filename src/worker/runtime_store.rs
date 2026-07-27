@@ -25,6 +25,18 @@ impl RuntimeStore {
 }
 
 impl RuntimeStore {
+    pub fn remove_from_partition(&self, partition: u16, keys: &[u64]) {
+        if let dashmap::mapref::entry::Entry::Occupied(mut occupied) = self.cache.entry(partition) {
+            let key_to_record = occupied.get_mut();
+            for key in keys {
+                key_to_record.remove(key);
+            }
+            if key_to_record.is_empty() {
+                occupied.remove();
+            }
+        }
+    }
+
     pub fn get_partition_records(&self, partition: u16, amount: usize) -> Vec<(u64, Arc<Record>)> {
         if let Some(entry) = self.cache.get(&partition) {
             return entry

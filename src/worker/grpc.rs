@@ -200,7 +200,7 @@ impl WorkerApi for WorkerApiService {
                         .await
                         .is_ok()
                     {
-                        input_from_worker(input_stream, &id, host, port, tx.clone()).await;
+                        input_from_worker(input_stream, &id, host, port, tx.clone(), &me).await;
                     }
                     worker_sessions.write().await.remove(&id);
                     tracing::info!("Node {} is disconnected", id);

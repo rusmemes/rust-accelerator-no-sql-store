@@ -1,19 +1,19 @@
 use crate::conversions::worker_api::v1::worker_api_client::WorkerApiClient;
-use crate::conversions::worker_api::v1::{worker_event, Connect, ConnectResponse};
-use crate::worker::grpc::input::input_from_worker;
+use crate::conversions::worker_api::v1::{Connect, ConnectResponse, worker_event};
 use crate::worker::grpc::ClientApiWorkerIOStream;
+use crate::worker::grpc::input::input_from_worker;
 use crate::{
     common::{Me, NodeId},
     conversions::{common::v1::Addr, worker_api::v1::WorkerEvent as ClientApiWorkerWorkerEvent},
     worker::{
         domain::WorkerProtocol,
-        grpc::{session::IOStreamExt, GRPC_CONNECTION_CHANNEL_BUFFER_SIZE},
+        grpc::{GRPC_CONNECTION_CHANNEL_BUFFER_SIZE, session::IOStreamExt},
     },
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc::Sender;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc::Sender;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Streaming};
 
@@ -93,9 +93,10 @@ async fn start_communication_with_worker(
 
             let sessions = sessions.clone();
             let tx = tx.clone();
+            let me = me.clone();
 
             tokio::spawn(async move {
-                input_from_worker(input_stream, &id, host, port, tx.clone()).await;
+                input_from_worker(input_stream, &id, host, port, tx.clone(), &me).await;
                 sessions.write().await.remove(&id);
                 tracing::info!("Node {} is disconnected", id);
                 let _ = tx.send(WorkerProtocol::NodeDisconnected { id }).await;

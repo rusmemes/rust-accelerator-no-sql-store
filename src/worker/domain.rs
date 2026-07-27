@@ -36,13 +36,18 @@ pub enum WorkerProtocol {
     SyncBatch {
         recipient_id: NodeId,
         request: Arc<SyncBatchRequest>,
-    }
+    },
+    SyncBatchResponse {
+        recipient_id: NodeId,
+        request_id: String,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct SyncBatchRequest {
-    pub id: String,
-    pub records: Vec<Record>
+    pub sender_id: NodeId,
+    pub request_id: String,
+    pub records: Vec<Record>,
 }
 
 #[derive(Debug, Clone)]
