@@ -1,11 +1,7 @@
 use crate::common::{ClusterNode, Me, Node, NodeId, NodeType, Partitions};
-use crate::worker::domain;
 use crate::worker::domain::{SyncBatchRequest, WorkerProtocol};
 use crate::worker::runtime_store::RuntimeStore;
 use crate::worker::service::state::{State, SyncData};
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use uuid::Uuid;
 
 pub(super) fn handle_cluster_state(
     output: &mut Vec<WorkerProtocol>,
@@ -14,7 +10,6 @@ pub(super) fn handle_cluster_state(
     leader_id: NodeId,
     items: Vec<ClusterNode>,
     partitions: Partitions,
-    me: &Me,
 ) {
     let accept: bool = if state.epoch.is_none() || state.epoch < Some(epoch) {
         state.epoch = Some(epoch);
@@ -27,10 +22,7 @@ pub(super) fn handle_cluster_state(
     };
 
     if accept {
-        let (mut master, secondary) = calc_partitions(&partitions, me);
         state.partitions = partitions;
-        master.extend(secondary);
-        state.expected_partitions = master;
 
         for item in items {
             match item {
@@ -64,21 +56,6 @@ pub(super) fn handle_cluster_state(
             }
         }
     }
-}
-
-fn calc_partitions(partitions: &Partitions, me: &Me) -> (HashSet<u16>, HashSet<u16>) {
-    let mut master = HashSet::new();
-    let mut secondary = HashSet::new();
-
-    for (id, partition) in &partitions.mapping {
-        if partition.master == me.id {
-            master.insert(*id);
-        } else if partition.replicas.contains(&me.id) {
-            secondary.insert(*id);
-        }
-    }
-
-    (master, secondary)
 }
 
 pub(super) fn handle_remove_old_partition(
@@ -124,65 +101,16 @@ pub fn sync_partitions(
     runtime_store: &RuntimeStore,
     me: &Me,
 ) {
-    let unexpected_partitions = runtime_store.unexpected_partitions(&state.expected_partitions);
-    for partition_id in unexpected_partitions {
-        if !state.sync.contains_key(&partition_id) {
-            if let Some(partition) = state.partitions.mapping.get(&partition_id) {
-                let mut right_nodes = HashSet::with_capacity(partition.replicas.len() + 1);
-                right_nodes.insert(&partition.master);
-                right_nodes.extend(partition.replicas.iter());
-
-                const PARTITION_SYNC_BATCH_SIZE: usize = 1000;
-                let records = runtime_store.get_partition_records(partition_id, PARTITION_SYNC_BATCH_SIZE);
-
-                let records = records
-                    .into_iter()
-                    .map(|(key, record)| domain::Record {
-                        key,
-                        value: record.value.clone(),
-                        ttl: record.expiration_time_ms,
-                        creation_time_ms: record.creation_time_ms,
-                    })
-                    .collect::<Vec<_>>();
-
-                let keys = records.iter().map(|record| record.key).collect::<Vec<_>>();
-
-                let request = Arc::new(SyncBatchRequest {
-                    sender_id: me.id.clone(),
-                    request_id: Uuid::new_v4().to_string(),
-                    records,
-                });
-
-                let request_id_to_sync_data = state
-                    .sync
-                    .entry(partition_id)
-                    .or_insert_with(|| HashMap::new());
-
-                let recipient_id_to_state = &mut request_id_to_sync_data
-                    .entry(request.request_id.clone())
-                    .or_insert_with(|| SyncData {
-                        keys,
-                        recipient_id_to_state: HashSet::new(),
-                    })
-                    .recipient_id_to_state;
-
-                for recipient_id in right_nodes {
-                    output.push(WorkerProtocol::SyncBatch {
-                        recipient_id: recipient_id.clone(),
-                        request: request.clone(),
-                    });
-                    recipient_id_to_state.insert(recipient_id.clone());
-                }
-            }
-        }
-    }
+    todo!()
 }
 
 pub fn handle_sync_batch_response(
     state: &mut State,
+    output: &mut Vec<WorkerProtocol>,
     request_id: String,
     recipient_id: NodeId,
     runtime_store: &RuntimeStore,
+    me: &Me
 ) {
     let sync = &mut state.sync;
     for (partition, data) in sync {
@@ -193,8 +121,21 @@ pub fn handle_sync_batch_response(
         {
             recipient_id_to_state.remove(&recipient_id);
             recipient_id_to_state.retain(|node_id| state.nodes.contains_key(node_id));
+
+            // todo: no need to remove synced records always
             if recipient_id_to_state.is_empty() {
                 runtime_store.remove_from_partition(*partition, keys);
+                if runtime_store.get_partition_records(*partition, 1).is_empty() {
+                    for (node_id, node) in &state.nodes {
+                        if node.is_manager() {
+                            output.push(WorkerProtocol::RemovePartitionFromReplica {
+                                id: node_id.clone(),
+                                replica_id: me.id.clone(),
+                                partition_id: *partition,
+                            });
+                        }
+                    }
+                }
             }
         }
         data.retain(|_, sync_data| !sync_data.recipient_id_to_state.is_empty());

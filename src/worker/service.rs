@@ -97,9 +97,7 @@ impl WorkerService {
                             partitions,
                         },
                     ..
-                } => handle_cluster_state(
-                    output, state, epoch, leader_id, items, partitions, &self.me,
-                ),
+                } => handle_cluster_state(output, state, epoch, leader_id, items, partitions),
                 WorkerProtocol::NodeDisconnected { id } => {
                     handle_node_disconnected(state, id, &self.me)
                 }
@@ -113,7 +111,7 @@ impl WorkerService {
                     handle_sync_batch(output, &request, &self.runtime_store);
                 }
                 WorkerProtocol::SyncBatchResponse { request_id, recipient_id  } => {
-                    handle_sync_batch_response(state, request_id, recipient_id, &self.runtime_store);
+                    handle_sync_batch_response(state, output, request_id, recipient_id, &self.runtime_store, &self.me);
                 }
             }
         }

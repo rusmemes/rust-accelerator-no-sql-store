@@ -109,6 +109,7 @@ async fn output_routes_cluster_state_to_worker_session_includes_partitions() {
                 6,
                 HashSet::from([manager_node_id.clone(), worker_node_id.clone()]),
             )]),
+            new_replicas: Default::default(),
         },
     )
     .await;

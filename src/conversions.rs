@@ -38,6 +38,7 @@ pub(crate) fn grpc_partitions_to_domain(partitions: v1::Partitions) -> Partition
     Partitions {
         mapping: grpc_partition_mapping_to_domain(partitions.mapping),
         old_replicas: grpc_old_replicas_to_domain(partitions.old_replicas),
+        new_replicas: grpc_old_replicas_to_domain(partitions.new_replicas),
     }
 }
 
@@ -45,6 +46,7 @@ pub(crate) fn domain_partitions_to_grpc(partitions: Partitions) -> v1::Partition
     v1::Partitions {
         mapping: domain_partition_mapping_to_grpc(partitions.mapping),
         old_replicas: domain_old_replicas_to_grpc(partitions.old_replicas),
+        new_replicas: domain_old_replicas_to_grpc(partitions.new_replicas),
     }
 }
 
@@ -91,7 +93,7 @@ fn domain_partition_mapping_to_grpc(
 }
 
 fn grpc_old_replicas_to_domain(
-    mapping: HashMap<u32, v1::OldReplicas>,
+    mapping: HashMap<u32, v1::Replicas>,
 ) -> HashMap<u16, std::collections::HashSet<crate::common::NodeId>> {
     mapping
         .into_iter()
@@ -110,13 +112,13 @@ fn grpc_old_replicas_to_domain(
 
 fn domain_old_replicas_to_grpc(
     mapping: HashMap<u16, std::collections::HashSet<crate::common::NodeId>>,
-) -> HashMap<u32, v1::OldReplicas> {
+) -> HashMap<u32, v1::Replicas> {
     mapping
         .into_iter()
         .map(|(partition_id, replicas)| {
             (
                 partition_id as u32,
-                v1::OldReplicas {
+                v1::Replicas {
                     replicas: replicas.into_iter().map(|node| node.to_string()).collect(),
                 },
             )

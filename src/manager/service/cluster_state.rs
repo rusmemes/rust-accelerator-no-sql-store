@@ -103,6 +103,7 @@ pub(super) fn handle_get_cluster_state(
                 partitions: Partitions {
                     mapping: state_partition_mapping_to_domain(&state.partitions.mapping),
                     old_replicas: state.partitions.old_replicas.clone(),
+                    new_replicas: state.partitions.new_replicas.clone(),
                 },
             },
         });

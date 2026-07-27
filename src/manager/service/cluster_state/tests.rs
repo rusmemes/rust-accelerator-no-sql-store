@@ -1,8 +1,8 @@
 use super::*;
 use crate::common::now_millis;
 use crate::manager::domain::ManagerProtocol;
-use crate::manager::service::test_support::*;
 use crate::manager::service::State;
+use crate::manager::service::test_support::*;
 use std::collections::{HashMap, HashSet};
 
 fn cluster_node(
@@ -97,6 +97,7 @@ async fn get_cluster_state_returns_worker_items_and_partition_mapping() {
                 },
             )]),
             old_replicas: Default::default(),
+            new_replicas: Default::default(),
         },
         workers_with_calculated_partitions: Default::default(),
     });
@@ -331,6 +332,7 @@ async fn cluster_state_applies_partition_mapping_and_adds_unknown_workers() {
                 8,
                 replicas(vec![worker.clone(), other_worker.clone()]),
             )]),
+            new_replicas: Default::default(),
         },
     );
 
