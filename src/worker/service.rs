@@ -1,7 +1,7 @@
-use crate::common::{ClusterState, Config, Heartbeat, Me, Node, NodeType, now_millis};
+use crate::common::{ClusterState, Config, Heartbeat, Me, Node, NodeId, NodeType, now_millis};
 use crate::worker::domain::WorkerProtocol;
 use crate::worker::runtime_store::RuntimeStore;
-use crate::worker::service::cluster_state::{handle_cluster_state, handle_remove_old_partition, handle_sync_batch, sync_partitions};
+use crate::worker::service::cluster_state::{handle_cluster_state, handle_remove_old_partition, handle_sync_batch, handle_sync_batch_response, sync_partitions};
 use crate::worker::service::connection::{handle_new_connection, handle_node_disconnected};
 use crate::worker::service::election::handle_leader;
 use crate::worker::service::heartbeat::{handle_heartbeat, heartbeats};
@@ -67,7 +67,7 @@ impl WorkerService {
     async fn tick(&mut self, output: &mut Vec<WorkerProtocol>) {
         if let Some(state) = self.state.as_mut() {
             heartbeats(state, output, &self.me);
-            sync_partitions(state, output, &self.runtime_store);
+            sync_partitions(state, output, &self.runtime_store, &self.me);
         }
         tracing::debug!("state: {:?}", self.state);
     }
@@ -110,7 +110,10 @@ impl WorkerService {
                     handle_remove_old_partition(state, replica_id, output, &self.me)
                 }
                 WorkerProtocol::SyncBatch { request, .. } => {
-                    handle_sync_batch(state, output, &request, &self.runtime_store);
+                    handle_sync_batch(output, &request, &self.runtime_store);
+                }
+                WorkerProtocol::SyncBatchResponse { request_id, recipient_id  } => {
+                    handle_sync_batch_response(state, request_id, recipient_id, &self.runtime_store);
                 }
             }
         }
