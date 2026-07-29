@@ -16,7 +16,8 @@ enum NodeType {
 
 message Partitions {
   map<uint32, Partition> mapping = 1;
-  map<uint32, OldReplicas> old_replicas = 2;
+  map<uint32, Replicas> new_replicas = 2;
+  map<uint32, Replicas> old_replicas = 3;
 }
 
 message Partition {
@@ -24,7 +25,7 @@ message Partition {
   repeated string replicas = 2;
 }
 
-message OldReplicas {
+message Replicas {
   repeated string replicas = 1;
 }
 

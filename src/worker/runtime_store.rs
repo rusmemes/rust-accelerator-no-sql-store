@@ -49,7 +49,7 @@ impl RuntimeStore {
         vec![]
     }
 
-    pub fn unexpected_partitions(&self, expected: &HashSet<u16>) -> Vec<u16> {
+    pub fn unexpected_partitions(&self, expected: &HashSet<u16>) -> Vec<u16> { // todo: remove it later
         self.cache
             .iter()
             .filter_map(|entry| {

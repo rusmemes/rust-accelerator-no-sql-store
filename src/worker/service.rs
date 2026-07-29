@@ -1,10 +1,11 @@
 use crate::common::{ClusterState, Config, Heartbeat, Me, Node, NodeId, NodeType, now_millis};
 use crate::worker::domain::WorkerProtocol;
 use crate::worker::runtime_store::RuntimeStore;
-use crate::worker::service::cluster_state::{handle_cluster_state, handle_remove_old_partition, handle_sync_batch, handle_sync_batch_response, sync_partitions};
+use crate::worker::service::cluster_state::{handle_cluster_state, handle_remove_old_partition};
 use crate::worker::service::connection::{handle_new_connection, handle_node_disconnected};
 use crate::worker::service::election::handle_leader;
 use crate::worker::service::heartbeat::{handle_heartbeat, heartbeats};
+use crate::worker::service::partitions::{handle_sync_batch, handle_sync_batch_response, sync_partitions};
 use crate::worker::service::state::State;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -17,6 +18,7 @@ mod connection;
 mod election;
 mod heartbeat;
 mod state;
+mod partitions;
 
 struct WorkerService {
     me: Me,
@@ -97,9 +99,7 @@ impl WorkerService {
                             partitions,
                         },
                     ..
-                } => handle_cluster_state(
-                    output, state, epoch, leader_id, items, partitions, &self.me,
-                ),
+                } => handle_cluster_state(output, state, epoch, leader_id, items, partitions),
                 WorkerProtocol::NodeDisconnected { id } => {
                     handle_node_disconnected(state, id, &self.me)
                 }
@@ -113,7 +113,7 @@ impl WorkerService {
                     handle_sync_batch(output, &request, &self.runtime_store);
                 }
                 WorkerProtocol::SyncBatchResponse { request_id, recipient_id  } => {
-                    handle_sync_batch_response(state, request_id, recipient_id, &self.runtime_store);
+                    handle_sync_batch_response(state, output, request_id, recipient_id, &self.runtime_store, &self.me);
                 }
             }
         }

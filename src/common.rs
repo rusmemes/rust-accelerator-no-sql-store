@@ -55,6 +55,7 @@ pub struct Node {
 pub struct Partitions {
     pub mapping: HashMap<u16, Partition>,
     pub old_replicas: HashMap<u16, HashSet<NodeId>>,
+    pub new_replicas: HashMap<u16, HashSet<NodeId>>,
 }
 
 #[derive(Debug, Clone)]

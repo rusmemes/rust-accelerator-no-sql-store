@@ -7,7 +7,6 @@ pub struct State {
     pub elected_leader_id: Option<NodeId>,
     pub nodes: HashMap<NodeId, Node>,
     pub partitions: Partitions,
-    pub expected_partitions: HashSet<u16>,
     pub sync: HashMap<u16, HashMap<String, SyncData>>
 }
 
