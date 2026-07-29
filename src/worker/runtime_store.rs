@@ -29,12 +29,11 @@ pub struct PartitionId(pub u16);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Key(pub u64);
 
-impl From<Key> for PartitionId {
-    fn from(key: Key) -> Self {
-        PartitionId((key.0 as usize % PARTITIONS_AMOUNT) as u16)
+impl Key {
+    pub fn partition(&self) -> PartitionId {
+        PartitionId((self.0 as usize % PARTITIONS_AMOUNT) as u16)
     }
 }
-
 
 impl RuntimeStore {
     pub fn remove_from_partition(&self, partition: PartitionId, keys: &[Key]) {
@@ -59,7 +58,7 @@ impl RuntimeStore {
                 .value()
                 .iter()
                 .take(amount)
-                .map(|entry| (entry.key().clone(), entry.value().clone()))
+                .map(|entry| (*entry.key(), entry.value().clone()))
                 .collect();
         }
         vec![]
@@ -88,7 +87,7 @@ impl RuntimeStore {
     }
 
     pub fn delete(&self, key: Key) {
-        let partition = key.into();
+        let partition = key.partition();
         let removed = if let Some(map) = self.cache.get(&partition) {
             map.remove(&key).is_some()
         } else {
@@ -101,7 +100,7 @@ impl RuntimeStore {
     }
 
     pub fn get(&self, key: Key) -> Option<Arc<Record>> {
-        let partition = key.into();
+        let partition = key.partition();
 
         let (res, removed) = if let Some(map) = self.cache.get(&partition) {
             match map.entry(key) {
@@ -127,7 +126,7 @@ impl RuntimeStore {
     }
 
     pub fn put(&self, key: Key, record: Record) {
-        let partition = key.into();
+        let partition = key.partition();
         let map = self.cache.entry(partition).or_default();
         match map.entry(key) {
             dashmap::mapref::entry::Entry::Occupied(mut occupied) => {
@@ -170,7 +169,7 @@ mod tests {
 
         assert!(store.get(key).is_none());
 
-        let partition = PartitionId::from(key);
+        let partition = key.partition();
         assert!(!store.cache.contains_key(&partition));
     }
 
@@ -178,7 +177,7 @@ mod tests {
     fn test_remove_partition_if_empty() {
         let store = RuntimeStore::new();
         let key = Key(1);
-        let partition = PartitionId::from(key);
+        let partition = key.partition();
 
         let now = now_millis();
         store.put(
@@ -204,7 +203,7 @@ mod tests {
     fn test_runtime_store_delete() {
         let store = RuntimeStore::new();
         let key = Key(1);
-        let partition = PartitionId::from(key);
+        let partition = key.partition();
 
         store.put(
             key,
@@ -274,7 +273,7 @@ mod tests {
         let store = RuntimeStore::new();
         let key1 = Key(1);
         let key2 = Key((PARTITIONS_AMOUNT + 1) as u64); // Тот же раздел, что и key1
-        let partition = PartitionId::from(key1);
+        let partition = key1.partition();
 
         store.put(
             key1,
@@ -310,7 +309,7 @@ mod tests {
         let store = RuntimeStore::new();
         let key1 = Key(1);
         let key2 = Key((PARTITIONS_AMOUNT + 1) as u64);
-        let partition = PartitionId::from(key1);
+        let partition = key1.partition();
 
         store.put(
             key1,
@@ -344,8 +343,8 @@ mod tests {
         let store = RuntimeStore::new();
         let key1 = Key(1);
         let key2 = Key(2);
-        let p1 = PartitionId::from(key1);
-        let p2 = PartitionId::from(key2);
+        let p1 = key1.partition();
+        let p2 = key2.partition();
 
         store.put(
             key1,
