@@ -1,4 +1,5 @@
 use crate::common::{ClusterState, Heartbeat, NodeId};
+use crate::worker::runtime_store::{Key, PartitionId};
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -31,7 +32,7 @@ pub enum WorkerProtocol {
     RemovePartitionFromReplica {
         id: NodeId,
         replica_id: NodeId,
-        partition_id: u16,
+        partition_id: PartitionId,
     },
     SyncBatch {
         recipient_id: NodeId,
@@ -52,7 +53,7 @@ pub struct SyncBatchRequest {
 
 #[derive(Debug, Clone)]
 pub struct Record {
-    pub key: u64,
+    pub key: Key,
     pub value: Vec<u8>,
     pub ttl: u64,
     pub creation_time_ms: u64,

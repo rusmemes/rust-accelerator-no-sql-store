@@ -1,6 +1,7 @@
 use crate::common::{Me, Node, NodeId, PARTITIONS_AMOUNT, Partitions};
 use crate::worker::domain::{SyncBatchRequest, WorkerProtocol};
-use crate::worker::runtime_store::RuntimeStore;
+use crate::worker::runtime_store;
+use crate::worker::runtime_store::{PartitionId, RuntimeStore};
 use crate::worker::service::state::{State, SyncData};
 use std::collections::{HashMap, HashSet};
 
@@ -11,7 +12,7 @@ pub fn sync_partitions(
     me: &Me,
 ) {
     for partition_id in 0..PARTITIONS_AMOUNT {
-        let partition_id = partition_id as u16;
+        let partition_id = PartitionId(partition_id as u16);
         if !runtime_store
             .get_partition_records(partition_id, 1)
             .is_empty()
@@ -28,7 +29,7 @@ pub fn sync_partitions(
 }
 
 fn get_node_ids_curr_node_has_to_sync_the_partition_to(
-    partition: u16,
+    partition: PartitionId,
     me: &NodeId,
     partitions: &Partitions,
     cluster_nodes: &HashMap<NodeId, Node>,
@@ -44,9 +45,11 @@ pub fn handle_sync_batch(
     for record in &sync_batch_request.records {
         runtime_store.put(
             record.key,
-            record.value.clone(),
-            record.ttl,
-            record.creation_time_ms,
+            runtime_store::Record{
+              value: record.value.clone(),
+                expiration_time_ms: record.ttl,
+                creation_time_ms: record.creation_time_ms,
+            },
         );
     }
 
@@ -86,7 +89,7 @@ pub fn handle_sync_batch_response(
                             output.push(WorkerProtocol::RemovePartitionFromReplica {
                                 id: node_id.clone(),
                                 replica_id: me.id.clone(),
-                                partition_id: *partition,
+                                partition_id: partition.clone(),
                             });
                         }
                     }

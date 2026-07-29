@@ -18,6 +18,7 @@ use crate::conversions::worker_api::v1::{
     SyncBatchRequest, SyncBatchResponse, WorkerEvent as ClientApiWorkerEvent, worker_event,
 };
 use crate::worker::domain;
+use crate::worker::runtime_store::{Key, PartitionId};
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
 use tonic::Status;
@@ -61,7 +62,7 @@ pub(super) async fn input_from_worker<S>(
                                 records: records
                                     .iter()
                                     .map(|r| domain::Record {
-                                        key: r.key,
+                                        key: Key(r.key),
                                         value: r.value.clone(),
                                         ttl: r.ttl,
                                         creation_time_ms: r.creation_time,
@@ -141,7 +142,7 @@ pub(super) async fn input_from_manager<S>(
                         .send(WorkerProtocol::RemovePartitionFromReplica {
                             id: id.clone(),
                             replica_id: replica_id.into(),
-                            partition_id: partition_id as u16,
+                            partition_id: PartitionId(partition_id as u16),
                         })
                         .await
                     {

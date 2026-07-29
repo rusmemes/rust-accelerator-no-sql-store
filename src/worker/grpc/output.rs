@@ -1,9 +1,10 @@
 use crate::conversions::worker_api;
-use crate::conversions::worker_api::v1::worker_event::Payload::{SyncBatchRequest, SyncBatchResponse};
 use crate::conversions::worker_api::v1::Record;
+use crate::conversions::worker_api::v1::worker_event::Payload::{SyncBatchRequest, SyncBatchResponse};
 use crate::worker::domain;
 use crate::worker::grpc::ClientApiWorkerIOStream;
 use crate::worker::grpc::worker_connection::new_worker_connection;
+use crate::worker::runtime_store::PartitionId;
 use crate::{
     common::{Heartbeat, Me, NodeId},
     conversions::{
@@ -107,7 +108,7 @@ async fn handle_sync_batch(
                 id: request.request_id.clone(),
                 records: request.records.iter().map(|r| {
                     Record {
-                        key: r.key,
+                        key: r.key.0,
                         value: r.value.clone(),
                         ttl: r.ttl,
                         creation_time: r.creation_time_ms,
@@ -147,14 +148,14 @@ pub(super) async fn handle_output_remove_partition_from_replica(
     manager_sessions: &RwLock<HashMap<NodeId, WorkerIOStream>>,
     recipient_id: NodeId,
     replica_id: NodeId,
-    partition_id: u16,
+    partition_id: PartitionId,
 ) {
     handle_common(
         "RemovePartitionFromReplica",
         || WorkerEvent {
             payload: Some(worker_event::Payload::RemovePartitionFromReplica(
                 RemovePartitionFromReplica {
-                    partition_id: partition_id as u32,
+                    partition_id: partition_id.0 as u32,
                     replica_id: replica_id.to_string(),
                 },
             )),

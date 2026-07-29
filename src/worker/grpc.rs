@@ -4,6 +4,7 @@ mod output;
 mod session;
 mod worker_connection;
 
+use crate::worker::runtime_store::{Key, Record};
 use crate::{
     common::{CommunicationStreamEither, Me, NodeId},
     conversions::{
@@ -116,7 +117,11 @@ impl WorkerApi for WorkerApiService {
                             ttl,
                             creation_time: Some(creation_time_ms),
                         } if request_type == RequestType::Put as i32 => {
-                            runtime_store.put(key, bytes, ttl.unwrap_or(0), creation_time_ms);
+                            runtime_store.put(Key(key), Record {
+                                value: bytes,
+                                expiration_time_ms: ttl.unwrap_or(0),
+                                creation_time_ms
+                            });
                             (id, None)
                         },
                         ClientRequest {
@@ -125,7 +130,7 @@ impl WorkerApi for WorkerApiService {
                             key,
                             ..
                         } if request_type == RequestType::Delete as i32 => {
-                            runtime_store.delete(key);
+                            runtime_store.delete(Key(key));
                             (id, None)
                         },
                         ClientRequest {
@@ -133,7 +138,7 @@ impl WorkerApi for WorkerApiService {
                             key,
                             ..
                         } /* considered as Get request */ => {
-                            let option = runtime_store.get(key);
+                            let option = runtime_store.get(Key(key));
                             (id, option.map(|r| r.value.clone()))
                         },
                     };
