@@ -1,5 +1,6 @@
 use crate::common::{ClusterState, Heartbeat, NodeId, PartitionId};
 use crate::worker::runtime_store::Key;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -40,14 +41,13 @@ pub enum WorkerProtocol {
     },
     SyncBatchResponse {
         recipient_id: NodeId,
-        request_id: String,
+        partition_id_to_max_applied_key: HashMap<PartitionId, Key>,
     },
 }
 
 #[derive(Debug, Clone)]
 pub struct SyncBatchRequest {
     pub sender_id: NodeId,
-    pub request_id: String,
     pub records: Vec<Record>,
 }
 

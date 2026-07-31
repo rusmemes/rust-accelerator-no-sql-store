@@ -112,8 +112,8 @@ impl WorkerService {
                 WorkerProtocol::SyncBatch { request, .. } => {
                     handle_sync_batch(output, &request, &self.runtime_store);
                 }
-                WorkerProtocol::SyncBatchResponse { request_id, recipient_id  } => {
-                    handle_sync_batch_response(state, output, request_id, recipient_id, &self.runtime_store, &self.me);
+                WorkerProtocol::SyncBatchResponse { recipient_id, partition_id_to_max_applied_key } => {
+                    handle_sync_batch_response(state, output, partition_id_to_max_applied_key, recipient_id, &self.runtime_store, &self.me);
                 }
             }
         }

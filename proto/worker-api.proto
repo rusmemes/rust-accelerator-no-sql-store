@@ -25,13 +25,11 @@ message Record {
 }
 
 message SyncBatchRequest {
-  string id = 1;
-  repeated Record records = 2;
+  repeated Record records = 1;
 }
 
 message SyncBatchResponse {
-  string sync_batch_request_id = 1;
-  bool applied = 2;
+  map<uint32, uint64> partition_id_to_max_applied_key = 1;
 }
 
 message WorkerEvent {

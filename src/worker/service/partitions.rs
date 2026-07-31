@@ -1,8 +1,9 @@
 use crate::common::{Me, Node, NodeId, PARTITIONS_AMOUNT, PartitionId, Partitions};
 use crate::worker::domain::{SyncBatchRequest, WorkerProtocol};
 use crate::worker::runtime_store;
-use crate::worker::runtime_store::RuntimeStore;
-use crate::worker::service::state::{State, SyncData};
+use crate::worker::runtime_store::{Key, RuntimeStore};
+use crate::worker::service::state::State;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 pub fn sync_partitions(
@@ -17,13 +18,30 @@ pub fn sync_partitions(
             .get_partition_records(partition_id, 1)
             .is_empty()
         {
-            let node_ids: HashSet<&NodeId> = get_node_ids_curr_node_has_to_sync_the_partition_to(
-                partition_id,
-                &me.id,
-                &state.partitions,
-                &state.nodes,
-            );
-            todo!()
+            let recipient_ids: HashSet<&NodeId> =
+                get_node_ids_curr_node_has_to_sync_the_partition_to(
+                    partition_id,
+                    &me.id,
+                    &state.partitions,
+                    &state.nodes,
+                );
+            if let Some(recipient_id_to_last_state) = state.sync.get_mut(&partition_id) {
+                for recipient_id in recipient_ids {
+                    if let Some((prev_max_key, confirmed)) =
+                        recipient_id_to_last_state.get_mut(recipient_id)
+                    {
+                        if *confirmed {
+                            todo!("send next batch")
+                        } else if !state.nodes.contains_key(recipient_id) {
+                            todo!("remove the entry")
+                        }
+                    } else {
+                        todo!("send first batches to all recipients")
+                    }
+                }
+            } else {
+                todo!("send first batches to all recipients")
+            }
         }
     }
 }
@@ -72,6 +90,8 @@ pub fn handle_sync_batch(
     sync_batch_request: &SyncBatchRequest,
     runtime_store: &RuntimeStore,
 ) {
+    let mut partition_id_to_max_applied_key = HashMap::new();
+
     for record in &sync_batch_request.records {
         runtime_store.put(
             record.key,
@@ -81,54 +101,34 @@ pub fn handle_sync_batch(
                 creation_time_ms: record.creation_time_ms,
             },
         );
+
+        match partition_id_to_max_applied_key.entry(record.key.partition()) {
+            Entry::Occupied(mut occupied) => {
+                if occupied.get() < &record.key {
+                    occupied.insert(record.key);
+                }
+            }
+            Entry::Vacant(occupied) => {
+                occupied.insert(record.key);
+            }
+        }
     }
 
     output.push(WorkerProtocol::SyncBatchResponse {
         recipient_id: sync_batch_request.sender_id.clone(),
-        request_id: sync_batch_request.request_id.clone(),
+        partition_id_to_max_applied_key,
     });
 }
 
 pub fn handle_sync_batch_response(
     state: &mut State,
     output: &mut Vec<WorkerProtocol>,
-    request_id: String,
-    recipient_id: NodeId,
+    partition_id_to_max_applied_key: HashMap<PartitionId, Key>,
+    sender_id: NodeId,
     runtime_store: &RuntimeStore,
     me: &Me,
 ) {
-    let sync = &mut state.sync;
-    for (partition, data) in sync {
-        if let Some(SyncData {
-            recipient_id_to_state,
-            keys,
-        }) = data.get_mut(&request_id)
-        {
-            recipient_id_to_state.remove(&recipient_id);
-            recipient_id_to_state.retain(|node_id| state.nodes.contains_key(node_id));
-
-            // todo: no need to remove synced records always
-            if recipient_id_to_state.is_empty() {
-                runtime_store.remove_from_partition(*partition, keys);
-                if runtime_store
-                    .get_partition_records(*partition, 1)
-                    .is_empty()
-                {
-                    for (node_id, node) in &state.nodes {
-                        if node.is_manager() {
-                            output.push(WorkerProtocol::RemovePartitionFromReplica {
-                                id: node_id.clone(),
-                                replica_id: me.id.clone(),
-                                partition_id: partition.clone(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        data.retain(|_, sync_data| !sync_data.recipient_id_to_state.is_empty());
-    }
-    state.sync.retain(|_, data| !data.is_empty());
+    todo!("apply sync response")
 }
 
 #[cfg(test)]

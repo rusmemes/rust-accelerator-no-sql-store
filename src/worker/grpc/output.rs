@@ -1,10 +1,13 @@
 use crate::common::PartitionId;
 use crate::conversions::worker_api;
 use crate::conversions::worker_api::v1::Record;
-use crate::conversions::worker_api::v1::worker_event::Payload::{SyncBatchRequest, SyncBatchResponse};
+use crate::conversions::worker_api::v1::worker_event::Payload::{
+    SyncBatchRequest, SyncBatchResponse,
+};
 use crate::worker::domain;
 use crate::worker::grpc::ClientApiWorkerIOStream;
 use crate::worker::grpc::worker_connection::new_worker_connection;
+use crate::worker::runtime_store::Key;
 use crate::{
     common::{Heartbeat, Me, NodeId},
     conversions::{
@@ -37,9 +40,9 @@ pub(super) async fn output(
         match message {
             WorkerProtocol::SyncBatchResponse {
                 recipient_id,
-                request_id,
+                partition_id_to_max_applied_key,
             } => {
-                handle_sync_batch_response(&tx, &worker_sessions, recipient_id, request_id).await;
+                handle_sync_batch_response(&tx, &worker_sessions, recipient_id, partition_id_to_max_applied_key).await;
             }
             WorkerProtocol::SyncBatch {
                 recipient_id,
@@ -105,35 +108,41 @@ async fn handle_sync_batch(
         "SyncBatch",
         || ClientApiWorkerEvent {
             payload: Some(SyncBatchRequest(worker_api::v1::SyncBatchRequest {
-                id: request.request_id.clone(),
-                records: request.records.iter().map(|r| {
-                    Record {
+                records: request
+                    .records
+                    .iter()
+                    .map(|r| Record {
                         key: r.key.0,
                         value: r.value.clone(),
                         ttl: r.ttl,
                         creation_time: r.creation_time_ms,
-                    }
-                }).collect(),
+                    })
+                    .collect(),
             })),
         },
         tx,
         worker_sessions,
         recipient_id,
-    ).await;
+    )
+    .await;
 }
 
 async fn handle_sync_batch_response(
     tx: &Sender<WorkerProtocol>,
     worker_sessions: &Arc<RwLock<HashMap<NodeId, ClientApiWorkerIOStream>>>,
     recipient_id: NodeId,
-    request_id: String,
+    partition_id_to_max_applied_key: HashMap<PartitionId, Key>,
 ) {
     handle_common(
         "SyncBatchResponse",
         || ClientApiWorkerEvent {
             payload: Some(SyncBatchResponse(worker_api::v1::SyncBatchResponse {
-                sync_batch_request_id: request_id,
-                applied: true,
+                partition_id_to_max_applied_key: partition_id_to_max_applied_key
+                    .iter()
+                    .map(|(partition_id, max_applied_key)| {
+                        (partition_id.0 as u32, max_applied_key.0)
+                    })
+                    .collect(),
             })),
         },
         tx,

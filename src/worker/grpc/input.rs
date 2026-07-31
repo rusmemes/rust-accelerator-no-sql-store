@@ -50,16 +50,12 @@ pub(super) async fn input_from_worker<S>(
         })) = input.next().await
         {
             match payload {
-                worker_event::Payload::SyncBatchRequest(SyncBatchRequest {
-                    id: request_id,
-                    records,
-                }) => {
+                worker_event::Payload::SyncBatchRequest(SyncBatchRequest { records }) => {
                     if let Err(e) = tx
                         .send(WorkerProtocol::SyncBatch {
                             recipient_id: me.id.clone(),
                             request: Arc::new(domain::SyncBatchRequest {
                                 sender_id: id.clone(),
-                                request_id,
                                 records: records
                                     .iter()
                                     .map(|r| domain::Record {
@@ -77,13 +73,17 @@ pub(super) async fn input_from_worker<S>(
                     }
                 }
                 worker_event::Payload::SyncBatchResponse(SyncBatchResponse {
-                    sync_batch_request_id: request_id,
-                    ..
+                    partition_id_to_max_applied_key,
                 }) => {
                     if let Err(e) = tx
                         .send(WorkerProtocol::SyncBatchResponse {
                             recipient_id: id.clone(),
-                            request_id,
+                            partition_id_to_max_applied_key: partition_id_to_max_applied_key
+                                .into_iter()
+                                .map(|(partition_id, max_applied_key)| {
+                                    (PartitionId(partition_id as u16), Key(max_applied_key))
+                                })
+                                .collect(),
                         })
                         .await
                     {
