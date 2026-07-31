@@ -1,5 +1,5 @@
 use super::State;
-use crate::common::{ClusterState, Me, NodeId, PARTITIONS_AMOUNT, Partition, Partitions};
+use crate::common::{ClusterState, Me, NodeId, PARTITIONS_AMOUNT, Partition, PartitionId, Partitions};
 use crate::manager::domain::ManagerProtocol;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -115,9 +115,10 @@ fn calculate_new_mapping(
         for replica in 0..replication_factor {
             let index = calc_replica_index(vec.len(), master_partition_index, replica);
             let id = vec.get(index).unwrap();
+            let partition_id = PartitionId(partition as u16);
             if replica == 0 {
                 new_mapping.insert(
-                    partition as u16,
+                    partition_id,
                     Partition {
                         master: id.clone(),
                         replicas: HashSet::new(),
@@ -125,7 +126,7 @@ fn calculate_new_mapping(
                 );
             } else {
                 new_mapping
-                    .get_mut(&(partition as u16))
+                    .get_mut(&partition_id)
                     .expect("entry is added on replica == 0")
                     .replicas
                     .insert(id.clone());

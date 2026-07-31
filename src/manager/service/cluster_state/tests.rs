@@ -1,5 +1,5 @@
 use super::*;
-use crate::common::now_millis;
+use crate::common::{Partition, now_millis};
 use crate::manager::domain::ManagerProtocol;
 use crate::manager::service::State;
 use crate::manager::service::test_support::*;
@@ -90,7 +90,7 @@ async fn get_cluster_state_returns_worker_items_and_partition_mapping() {
         ]),
         partitions: Partitions {
             mapping: HashMap::from([(
-                7,
+                PartitionId(7),
                 Partition {
                     master: worker_id.clone(),
                     replicas: replicas(vec![me.id.clone()]),
@@ -133,7 +133,7 @@ async fn get_cluster_state_returns_worker_items_and_partition_mapping() {
         cluster_state
             .partitions
             .mapping
-            .get(&7)
+            .get(&PartitionId(7))
             .map(|partition| (&partition.master, &partition.replicas)),
         Some((&worker_id, &replicas(vec![me.id.clone()])))
     );
@@ -322,14 +322,14 @@ async fn cluster_state_applies_partition_mapping_and_adds_unknown_workers() {
         ],
         Partitions {
             mapping: HashMap::from([(
-                9,
+                PartitionId(9),
                 Partition {
                     master: worker.clone(),
                     replicas: replicas(vec![other_worker.clone()]),
                 },
             )]),
             old_replicas: HashMap::from([(
-                8,
+                PartitionId(8),
                 replicas(vec![worker.clone(), other_worker.clone()]),
             )]),
             new_replicas: Default::default(),
@@ -350,12 +350,12 @@ async fn cluster_state_applies_partition_mapping_and_adds_unknown_workers() {
         state
             .partitions
             .mapping
-            .get(&9)
+            .get(&PartitionId(9))
             .map(|partition| (&partition.master, &partition.replicas)),
         Some((&worker, &replicas(vec![other_worker.clone()])))
     );
     assert_eq!(
-        state.partitions.old_replicas.get(&8),
+        state.partitions.old_replicas.get(&PartitionId(8)),
         Some(&replicas(vec![worker, other_worker]))
     );
 }

@@ -1,7 +1,7 @@
-use crate::common::{Me, Node, NodeId, PARTITIONS_AMOUNT, Partitions};
+use crate::common::{Me, Node, NodeId, PARTITIONS_AMOUNT, PartitionId, Partitions};
 use crate::worker::domain::{SyncBatchRequest, WorkerProtocol};
 use crate::worker::runtime_store;
-use crate::worker::runtime_store::{PartitionId, RuntimeStore};
+use crate::worker::runtime_store::RuntimeStore;
 use crate::worker::service::state::{State, SyncData};
 use std::collections::{HashMap, HashSet};
 
@@ -34,7 +34,11 @@ fn get_node_ids_curr_node_has_to_sync_the_partition_to(
     partitions: &Partitions,
     cluster_nodes: &HashMap<NodeId, Node>,
 ) -> HashSet<NodeId> {
-    todo!()
+    let mut node_ids: HashSet<NodeId> = HashSet::new();
+
+
+
+    node_ids
 }
 
 pub fn handle_sync_batch(

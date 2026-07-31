@@ -1,4 +1,4 @@
-use crate::common::{PARTITIONS_AMOUNT, now_millis};
+use crate::common::{PARTITIONS_AMOUNT, PartitionId, now_millis};
 use dashmap::DashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -23,8 +23,7 @@ impl RuntimeStore {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PartitionId(pub u16);
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Key(pub u64);

@@ -99,14 +99,14 @@ async fn output_routes_cluster_state_to_worker_session_includes_partitions() {
         ],
         Partitions {
             mapping: HashMap::from([(
-                7,
+                PartitionId(7),
                 Partition {
                     master: worker_node_id.clone(),
                     replicas: HashSet::from([manager_node_id.clone()]),
                 },
             )]),
             old_replicas: HashMap::from([(
-                6,
+                PartitionId(6),
                 HashSet::from([manager_node_id.clone(), worker_node_id.clone()]),
             )]),
             new_replicas: Default::default(),

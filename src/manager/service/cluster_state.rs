@@ -1,7 +1,6 @@
 use super::{Node, State};
-use crate::common::{ClusterNode, ClusterState, Me, NodeId, NodeType, Partition, Partitions};
+use crate::common::{ClusterNode, ClusterState, Me, NodeId, NodeType, PartitionId, Partitions};
 use crate::manager::domain::ManagerProtocol;
-use std::collections::HashMap;
 
 pub(super) fn handle_cluster_state(
     output: &mut Vec<ManagerProtocol>,
@@ -101,7 +100,7 @@ pub(super) fn handle_get_cluster_state(
                     )
                     .collect(),
                 partitions: Partitions {
-                    mapping: state_partition_mapping_to_domain(&state.partitions.mapping),
+                    mapping: state.partitions.mapping.clone(),
                     old_replicas: state.partitions.old_replicas.clone(),
                     new_replicas: state.partitions.new_replicas.clone(),
                 },
@@ -110,29 +109,12 @@ pub(super) fn handle_get_cluster_state(
     }
 }
 
-fn state_partition_mapping_to_domain(
-    mapping: &HashMap<u16, Partition>,
-) -> HashMap<u16, Partition> {
-    mapping
-        .iter()
-        .map(|(partition_id, partition)| {
-            (
-                *partition_id,
-                Partition {
-                    master: partition.master.clone(),
-                    replicas: partition.replicas.clone(),
-                },
-            )
-        })
-        .collect()
-}
-
 pub(super) fn handle_remove_old_partition(
     output: &mut Vec<ManagerProtocol>,
     state: &mut State,
     id: NodeId,
     replica_id: NodeId,
-    partition_id: u16,
+    partition_id: PartitionId,
     me: &Me,
 ) {
     let remove = state

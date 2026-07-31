@@ -1,10 +1,10 @@
+use crate::common::PartitionId;
 use crate::conversions::worker_api;
 use crate::conversions::worker_api::v1::Record;
 use crate::conversions::worker_api::v1::worker_event::Payload::{SyncBatchRequest, SyncBatchResponse};
 use crate::worker::domain;
 use crate::worker::grpc::ClientApiWorkerIOStream;
 use crate::worker::grpc::worker_connection::new_worker_connection;
-use crate::worker::runtime_store::PartitionId;
 use crate::{
     common::{Heartbeat, Me, NodeId},
     conversions::{

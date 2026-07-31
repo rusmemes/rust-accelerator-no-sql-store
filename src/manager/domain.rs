@@ -1,4 +1,4 @@
-use crate::common::{ClusterState, Heartbeat, NodeId};
+use crate::common::{ClusterState, Heartbeat, NodeId, PartitionId};
 
 #[derive(Debug)]
 pub enum ManagerProtocol {
@@ -40,6 +40,6 @@ pub enum ManagerProtocol {
     RemovePartitionFromReplica {
         id: NodeId,
         replica_id: NodeId,
-        partition_id: u16,
+        partition_id: PartitionId,
     },
 }

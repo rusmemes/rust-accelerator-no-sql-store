@@ -51,11 +51,14 @@ pub struct Node {
     pub node_type: NodeType,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PartitionId(pub u16);
+
 #[derive(Debug, Default, Clone)]
 pub struct Partitions {
-    pub mapping: HashMap<u16, Partition>,
-    pub old_replicas: HashMap<u16, HashSet<NodeId>>,
-    pub new_replicas: HashMap<u16, HashSet<NodeId>>,
+    pub mapping: HashMap<PartitionId, Partition>,
+    pub old_replicas: HashMap<PartitionId, HashSet<NodeId>>,
+    pub new_replicas: HashMap<PartitionId, HashSet<NodeId>>,
 }
 
 #[derive(Debug, Clone)]

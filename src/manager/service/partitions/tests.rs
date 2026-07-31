@@ -5,16 +5,16 @@ use crate::manager::service::State;
 use crate::manager::service::test_support::*;
 use std::collections::{HashMap, HashSet};
 
-fn expected_master_for(partition: u16, workers: &[NodeId]) -> NodeId {
-    workers[partition as usize % workers.len()].clone()
+fn expected_master_for(partition: PartitionId, workers: &[NodeId]) -> NodeId {
+    workers[partition.0 as usize % workers.len()].clone()
 }
 
 fn expected_replicas_for(
-    partition: u16,
+    partition: PartitionId,
     replication_factor: usize,
     workers: &[NodeId],
 ) -> Vec<NodeId> {
-    let master_index = partition as usize % workers.len();
+    let master_index = partition.0 as usize % workers.len();
     (1..replication_factor)
         .map(|replica| workers[calc_replica_index(workers.len(), master_index, replica)].clone())
         .collect()
@@ -77,7 +77,7 @@ async fn worker_partitions_recomputes_cluster_partition_mapping_and_broadcasts_c
     assert_eq!(state.partitions.mapping.len(), PARTITIONS_AMOUNT);
     assert!(state.partitions.old_replicas.is_empty());
 
-    for partition in [0, 1, 2, 4095] {
+    for partition in [PartitionId(0), PartitionId(1), PartitionId(2), PartitionId(4095)] {
         let actual = state.partitions.mapping.get(&partition).unwrap();
         assert_eq!(actual.master, expected_master_for(partition, &workers));
         assert_eq!(
@@ -121,7 +121,7 @@ async fn worker_partitions_moves_previous_mapping_to_old_mapping_when_worker_lay
         let state = service.state.as_ref().expect("state exists");
         assert_eq!(state.partitions.mapping.len(), PARTITIONS_AMOUNT);
         assert!(state.partitions.old_replicas.is_empty());
-        for partition in [0, 1, 4095] {
+        for partition in [PartitionId(0), PartitionId(1), PartitionId(4095)] {
             assert_eq!(
                 state.partitions.mapping.get(&partition).unwrap().master,
                 expected_master_for(partition, &initial_workers)
@@ -153,36 +153,36 @@ async fn worker_partitions_moves_previous_mapping_to_old_mapping_when_worker_lay
     )));
 
     let state = service.state.as_ref().expect("state exists");
-    for partition in [0, 1, 2, 4095] {
+    for partition in [PartitionId(0), PartitionId(1), PartitionId(2), PartitionId(4095)] {
         assert_eq!(
             state.partitions.mapping.get(&partition).unwrap().master,
             expected_master_for(partition, &new_workers)
         );
     }
     assert_eq!(
-        state.partitions.old_replicas.get(&0),
+        state.partitions.old_replicas.get(&PartitionId(0)),
         Some(&replicas(vec![worker_a.clone()]))
     );
     assert_eq!(
-        state.partitions.old_replicas.get(&1),
+        state.partitions.old_replicas.get(&PartitionId(1)),
         Some(&replicas(vec![worker_b.clone()]))
     );
     assert_eq!(
-        state.partitions.old_replicas.get(&2),
+        state.partitions.old_replicas.get(&PartitionId(2)),
         Some(&replicas(vec![worker_a.clone()]))
     );
     assert_eq!(
-        state.partitions.old_replicas.get(&4095),
+        state.partitions.old_replicas.get(&PartitionId(4095)),
         Some(&replicas(vec![worker_b.clone()]))
     );
-    assert!(state.partitions.new_replicas.get(&0).unwrap().is_empty());
-    assert!(state.partitions.new_replicas.get(&1).unwrap().is_empty());
+    assert!(state.partitions.new_replicas.get(&PartitionId(0)).unwrap().is_empty());
+    assert!(state.partitions.new_replicas.get(&PartitionId(1)).unwrap().is_empty());
     assert_eq!(
-        state.partitions.new_replicas.get(&2),
+        state.partitions.new_replicas.get(&PartitionId(2)),
         Some(&replicas(vec![worker_c.clone()]))
     );
     assert_eq!(
-        state.partitions.new_replicas.get(&4095),
+        state.partitions.new_replicas.get(&PartitionId(4095)),
         Some(&replicas(vec![worker_a.clone()]))
     );
 }
@@ -206,13 +206,13 @@ async fn worker_partitions_recomputes_while_old_mapping_is_present_and_merges_tr
         ]),
         partitions: Partitions {
             mapping: HashMap::from([(
-                1,
+                PartitionId(1),
                 Partition {
                     master: worker_a.clone(),
                     replicas: HashSet::new(),
                 },
             )]),
-            old_replicas: HashMap::from([(1, replicas(vec![worker_b.clone()]))]),
+            old_replicas: HashMap::from([(PartitionId(1), replicas(vec![worker_b.clone()]))]),
             new_replicas: Default::default(),
         },
         workers_with_calculated_partitions: [worker_a.clone(), worker_b.clone()]
@@ -236,12 +236,12 @@ async fn worker_partitions_recomputes_while_old_mapping_is_present_and_merges_tr
         state
             .partitions
             .mapping
-            .get(&1)
+            .get(&PartitionId(1))
             .map(|partition| &partition.master),
         Some(&worker_b)
     );
     assert_eq!(
-        state.partitions.old_replicas.get(&1),
+        state.partitions.old_replicas.get(&PartitionId(1)),
         Some(&replicas(vec![worker_a, worker_b]))
     );
     assert!(state.workers_with_calculated_partitions.contains(&worker_c));
@@ -273,15 +273,15 @@ fn move_current_mapping_to_old_merges_existing_old_mapping_and_filters_stale_rep
         ]),
         partitions: Partitions {
             mapping: HashMap::from([(
-                1,
+                PartitionId(1),
                 Partition {
                     master: current_master.clone(),
                     replicas: replicas(vec![current_replica.clone(), old_replica.clone()]),
                 },
             )]),
             old_replicas: HashMap::from([
-                (1, replicas(vec![old_master.clone(), old_replica.clone()])),
-                (2, replicas(vec![stale_worker.clone()])),
+                (PartitionId(1), replicas(vec![old_master.clone(), old_replica.clone()])),
+                (PartitionId(2), replicas(vec![stale_worker.clone()])),
             ]),
             new_replicas: Default::default(),
         },
@@ -297,7 +297,7 @@ fn move_current_mapping_to_old_merges_existing_old_mapping_and_filters_stale_rep
 
     assert!(!state.partitions.mapping.is_empty());
     assert_eq!(
-        state.partitions.old_replicas.get(&1),
+        state.partitions.old_replicas.get(&PartitionId(1)),
         Some(&replicas(vec![
             current_master,
             current_replica,
@@ -308,11 +308,11 @@ fn move_current_mapping_to_old_merges_existing_old_mapping_and_filters_stale_rep
         !state
             .partitions
             .old_replicas
-            .get(&1)
+            .get(&PartitionId(1))
             .unwrap()
             .contains(&old_master)
     );
-    assert!(!state.partitions.old_replicas.contains_key(&2));
+    assert!(!state.partitions.old_replicas.contains_key(&PartitionId(2)));
     assert!(
         !state
             .partitions

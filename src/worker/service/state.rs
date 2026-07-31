@@ -1,5 +1,5 @@
-use crate::common::{Node, NodeId, Partitions};
-use crate::worker::runtime_store::{Key, PartitionId};
+use crate::common::{Node, NodeId, PartitionId, Partitions};
+use crate::worker::runtime_store::Key;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]

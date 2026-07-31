@@ -1,5 +1,5 @@
-use crate::common::{ClusterState, Heartbeat, NodeId};
-use crate::worker::runtime_store::{Key, PartitionId};
+use crate::common::{ClusterState, Heartbeat, NodeId, PartitionId};
+use crate::worker::runtime_store::Key;
 use std::sync::Arc;
 
 #[derive(Debug)]

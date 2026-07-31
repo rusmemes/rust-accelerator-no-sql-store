@@ -13,12 +13,13 @@ use crate::{
 };
 use std::sync::Arc;
 
+use crate::common::PartitionId;
 use crate::conversions::worker_api;
 use crate::conversions::worker_api::v1::{
     SyncBatchRequest, SyncBatchResponse, WorkerEvent as ClientApiWorkerEvent, worker_event,
 };
 use crate::worker::domain;
-use crate::worker::runtime_store::{Key, PartitionId};
+use crate::worker::runtime_store::Key;
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
 use tonic::Status;
