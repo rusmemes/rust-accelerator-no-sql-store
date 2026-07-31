@@ -1,3 +1,4 @@
+use crate::common::PartitionId;
 use crate::{
     common::Config,
     common::{ClusterNode, ClusterState, Heartbeat, Me, NodeId, Partitions},
@@ -5,17 +6,17 @@ use crate::{
         common::v1::{Addr, ClusterState as GrpcClusterState, GetState, Node},
         domain_node_type_to_grpc,
         domain_partitions_to_grpc,
-        manager_api::v1::{manager_event::Payload, worker_event, Heartbeat as GrpcHeartbeat, Leader as GrpcLeader, ManagerEvent, RemovePartitionFromReplica, VoteRequest as GrpcVoteRequest, VoteResponse as GrpcVoteResponse, WorkerEvent}
+        manager_api::v1::{Heartbeat as GrpcHeartbeat, Leader as GrpcLeader, ManagerEvent, RemovePartitionFromReplica, VoteRequest as GrpcVoteRequest, VoteResponse as GrpcVoteResponse, WorkerEvent, manager_event::Payload, worker_event},
     },
     manager::{
         domain::ManagerProtocol,
-        grpc::session::{handle_common, ManagerIOStream, WorkerIOStream},
+        grpc::session::{ManagerIOStream, WorkerIOStream, handle_common},
     },
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::RwLock;
+use tokio::sync::mpsc::{Receiver, Sender};
 
 pub(super) async fn output(
     me: Me,
@@ -316,10 +317,10 @@ pub(super) async fn handle_output_remove_partition_from_replica(
     worker_sessions: &RwLock<HashMap<NodeId, WorkerIOStream>>,
     recipient_id: NodeId,
     replica_id: NodeId,
-    partition_id: u16,
+    partition_id: PartitionId,
 ) {
     let remove_partition_from_replica = || RemovePartitionFromReplica {
-        partition_id: partition_id as u32,
+        partition_id: partition_id.0 as u32,
         replica_id: replica_id.to_string(),
     };
     let is_worker = worker_sessions.read().await.contains_key(&recipient_id);

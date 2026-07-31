@@ -13,12 +13,13 @@ use crate::{
 };
 use std::sync::Arc;
 
+use crate::common::PartitionId;
 use crate::conversions::worker_api;
 use crate::conversions::worker_api::v1::{
     SyncBatchRequest, SyncBatchResponse, WorkerEvent as ClientApiWorkerEvent, worker_event,
 };
 use crate::worker::domain;
-use crate::worker::runtime_store::{Key, PartitionId};
+use crate::worker::runtime_store::Key;
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
 use tonic::Status;
@@ -49,16 +50,12 @@ pub(super) async fn input_from_worker<S>(
         })) = input.next().await
         {
             match payload {
-                worker_event::Payload::SyncBatchRequest(SyncBatchRequest {
-                    id: request_id,
-                    records,
-                }) => {
+                worker_event::Payload::SyncBatchRequest(SyncBatchRequest { records }) => {
                     if let Err(e) = tx
                         .send(WorkerProtocol::SyncBatch {
                             recipient_id: me.id.clone(),
                             request: Arc::new(domain::SyncBatchRequest {
                                 sender_id: id.clone(),
-                                request_id,
                                 records: records
                                     .iter()
                                     .map(|r| domain::Record {
@@ -76,13 +73,17 @@ pub(super) async fn input_from_worker<S>(
                     }
                 }
                 worker_event::Payload::SyncBatchResponse(SyncBatchResponse {
-                    sync_batch_request_id: request_id,
-                    ..
+                    partition_id_to_max_applied_key,
                 }) => {
                     if let Err(e) = tx
                         .send(WorkerProtocol::SyncBatchResponse {
                             recipient_id: id.clone(),
-                            request_id,
+                            partition_id_to_max_applied_key: partition_id_to_max_applied_key
+                                .into_iter()
+                                .map(|(partition_id, max_applied_key)| {
+                                    (PartitionId(partition_id as u16), Key(max_applied_key))
+                                })
+                                .collect(),
                         })
                         .await
                     {

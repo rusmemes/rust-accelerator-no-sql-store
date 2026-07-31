@@ -1,3 +1,4 @@
+use crate::common::PartitionId;
 use crate::{
     common::{ClusterNode, ClusterState, Heartbeat, Me, NodeId},
     conversions::{
@@ -5,8 +6,6 @@ use crate::{
         grpc_node_type_to_domain,
         grpc_partitions_to_domain,
         manager_api::v1::{
-            manager_event::Payload,
-            worker_event,
             Connect as GrpcConnect,
             Heartbeat as GrpcHeartbeat,
             Leader as GrpcLeader,
@@ -15,9 +14,11 @@ use crate::{
             VoteRequest as GrpcVoteRequest,
             VoteResponse as GrpcVoteResponse,
             WorkerEvent
-        }
+            ,
+            manager_event::Payload,
+            worker_event},
     },
-    manager::domain::ManagerProtocol
+    manager::domain::ManagerProtocol,
 };
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
@@ -56,7 +57,7 @@ pub(super) async fn input_from_worker<S>(
                         .send(ManagerProtocol::RemovePartitionFromReplica {
                             id: id.clone(),
                             replica_id: replica_id.into(),
-                            partition_id: partition_id as u16,
+                            partition_id: PartitionId(partition_id as u16),
                         })
                         .await
                     {
@@ -145,7 +146,7 @@ pub(super) async fn input_from_manager(
                         .send(ManagerProtocol::RemovePartitionFromReplica {
                             id: id.clone(),
                             replica_id: replica_id.into(),
-                            partition_id: partition_id as u16,
+                            partition_id: PartitionId(partition_id as u16),
                         })
                         .await
                     {

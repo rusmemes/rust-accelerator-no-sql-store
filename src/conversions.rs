@@ -1,4 +1,4 @@
-use crate::common::{NodeType, Partition, Partitions};
+use crate::common::{NodeType, Partition, PartitionId, Partitions};
 use crate::conversions::common::v1;
 use std::collections::HashMap;
 
@@ -52,12 +52,12 @@ pub(crate) fn domain_partitions_to_grpc(partitions: Partitions) -> v1::Partition
 
 fn grpc_partition_mapping_to_domain(
     mapping: HashMap<u32, v1::Partition>,
-) -> HashMap<u16, Partition> {
+) -> HashMap<PartitionId, Partition> {
     mapping
         .into_iter()
         .map(|(partition_id, partition)| {
             (
-                partition_id as u16,
+                PartitionId(partition_id as u16),
                 Partition {
                     master: partition.master.into(),
                     replicas: partition
@@ -72,13 +72,13 @@ fn grpc_partition_mapping_to_domain(
 }
 
 fn domain_partition_mapping_to_grpc(
-    mapping: HashMap<u16, Partition>,
+    mapping: HashMap<PartitionId, Partition>,
 ) -> HashMap<u32, v1::Partition> {
     mapping
         .into_iter()
         .map(|(partition_id, partition)| {
             (
-                partition_id as u32,
+                partition_id.0 as u32,
                 v1::Partition {
                     master: partition.master.to_string(),
                     replicas: partition
@@ -94,12 +94,12 @@ fn domain_partition_mapping_to_grpc(
 
 fn grpc_old_replicas_to_domain(
     mapping: HashMap<u32, v1::Replicas>,
-) -> HashMap<u16, std::collections::HashSet<crate::common::NodeId>> {
+) -> HashMap<PartitionId, std::collections::HashSet<crate::common::NodeId>> {
     mapping
         .into_iter()
         .map(|(partition_id, old_replicas)| {
             (
-                partition_id as u16,
+                PartitionId(partition_id as u16),
                 old_replicas
                     .replicas
                     .into_iter()
@@ -111,13 +111,13 @@ fn grpc_old_replicas_to_domain(
 }
 
 fn domain_old_replicas_to_grpc(
-    mapping: HashMap<u16, std::collections::HashSet<crate::common::NodeId>>,
+    mapping: HashMap<PartitionId, std::collections::HashSet<crate::common::NodeId>>,
 ) -> HashMap<u32, v1::Replicas> {
     mapping
         .into_iter()
         .map(|(partition_id, replicas)| {
             (
-                partition_id as u32,
+                partition_id.0 as u32,
                 v1::Replicas {
                     replicas: replicas.into_iter().map(|node| node.to_string()).collect(),
                 },
