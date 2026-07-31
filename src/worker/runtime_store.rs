@@ -1,6 +1,6 @@
 use crate::common::{PARTITIONS_AMOUNT, PartitionId, now_millis};
+use crossbeam_skiplist::SkipMap;
 use dashmap::DashMap;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -12,7 +12,7 @@ pub struct Record {
 
 #[derive(Default, Clone)]
 pub struct RuntimeStore {
-    cache: Arc<DashMap<PartitionId, DashMap<Key, Arc<Record>>>>,
+    cache: Arc<DashMap<PartitionId, SkipMap<Key, Arc<Record>>>>,
 }
 
 impl RuntimeStore {
@@ -23,9 +23,7 @@ impl RuntimeStore {
     }
 }
 
-
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Key(pub u64);
 
 impl Key {
@@ -63,20 +61,6 @@ impl RuntimeStore {
         vec![]
     }
 
-    pub fn unexpected_partitions(&self, expected: &HashSet<PartitionId>) -> Vec<PartitionId> {
-        // todo: remove it later
-        self.cache
-            .iter()
-            .filter_map(|entry| {
-                if expected.contains(entry.key()) || entry.value().is_empty() {
-                    None
-                } else {
-                    Some(*entry.key())
-                }
-            })
-            .collect()
-    }
-
     pub fn remove_partition_if_empty(&self, partition: PartitionId) {
         if let dashmap::mapref::entry::Entry::Occupied(occupied) = self.cache.entry(partition)
             && occupied.get().is_empty()
@@ -101,24 +85,26 @@ impl RuntimeStore {
     pub fn get(&self, key: Key) -> Option<Arc<Record>> {
         let partition = key.partition();
 
-        let (res, removed) = if let Some(map) = self.cache.get(&partition) {
-            match map.entry(key) {
-                dashmap::mapref::entry::Entry::Occupied(occupied) => {
-                    let exp_time = occupied.get().expiration_time_ms;
-                    if exp_time == 0 || exp_time > now_millis() {
-                        (Some(occupied.get().clone()), false)
-                    } else {
-                        occupied.remove();
-                        (None, true)
-                    }
+        let mut needs_partition_cleanup = false;
+        let res = if let Some(sorted_map) = self.cache.get(&partition) {
+            if let Some(entry) = sorted_map.get(&key) {
+                let record = entry.value();
+                let exp_time = record.expiration_time_ms;
+                if exp_time == 0 || exp_time > now_millis() {
+                    Some(record.clone())
+                } else {
+                    entry.remove();
+                    needs_partition_cleanup = true;
+                    None
                 }
-                dashmap::mapref::entry::Entry::Vacant(_) => (None, false),
+            } else {
+                None
             }
         } else {
-            (None, false)
+            None
         };
 
-        if res.is_none() && removed {
+        if needs_partition_cleanup {
             self.remove_partition_if_empty(partition);
         }
         res
@@ -126,23 +112,18 @@ impl RuntimeStore {
 
     pub fn put(&self, key: Key, record: Record) {
         let partition = key.partition();
-        let map = self.cache.entry(partition).or_default();
-        match map.entry(key) {
-            dashmap::mapref::entry::Entry::Occupied(mut occupied) => {
-                if occupied.get().creation_time_ms <= record.creation_time_ms {
-                    occupied.insert(Arc::new(record));
-                }
-            }
-            dashmap::mapref::entry::Entry::Vacant(occupied) => {
-                occupied.insert(Arc::new(record));
-            }
-        }
+        let sorted_map = self.cache.entry(partition).or_default();
+        let record = Arc::new(record);
+        sorted_map.compare_insert(key, record.clone(), |old| {
+            old.creation_time_ms <= record.creation_time_ms
+        });
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
     use std::time::Duration;
 
     #[test]
@@ -335,39 +316,6 @@ mod tests {
 
         let records_limited = store.get_partition_records(partition, 1);
         assert_eq!(records_limited.len(), 1);
-    }
-
-    #[test]
-    fn test_unexpected_partitions() {
-        let store = RuntimeStore::new();
-        let key1 = Key(1);
-        let key2 = Key(2);
-        let p1 = key1.partition();
-        let p2 = key2.partition();
-
-        store.put(
-            key1,
-            Record {
-                value: vec![1],
-                expiration_time_ms: 0,
-                creation_time_ms: 0,
-            },
-        );
-        store.put(
-            key2,
-            Record {
-                value: vec![2],
-                expiration_time_ms: 0,
-                creation_time_ms: 0,
-            },
-        );
-
-        let expected = HashSet::from([p1]);
-        let unexpected = store.unexpected_partitions(&expected);
-        assert_eq!(unexpected, vec![p2]);
-
-        let expected_both = HashSet::from([p1, p2]);
-        assert!(store.unexpected_partitions(&expected_both).is_empty());
     }
 
     #[test]
