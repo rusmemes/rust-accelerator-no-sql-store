@@ -103,7 +103,7 @@ fn sync_batch(
     recipient: &NodeId,
     partition: &PartitionId,
     after_key: Option<&Key>,
-) -> Key {
+) -> Key { // todo: Option<Key>
     todo!("sync batch")
 }
 
