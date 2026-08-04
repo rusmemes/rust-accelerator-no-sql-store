@@ -60,41 +60,81 @@ pub fn sync_partitions(
                     {
                         const SYNC_TIMEOUT_MS: u64 = 60000;
                         if *confirmed {
-                            let new_max_key = sync_batch(output, runtime_store, recipient_id, &partition_id, Some(curr_max_key));
-                            *prev_max_key = Some(*curr_max_key);
-                            *curr_max_key = new_max_key;
-                            *confirmed = false;
-                            *last_start_time = now_millis();
+                            if let Some(new_max_key) = sync_batch(
+                                output,
+                                runtime_store,
+                                recipient_id,
+                                &partition_id,
+                                Some(curr_max_key),
+                            ) {
+                                *prev_max_key = Some(*curr_max_key);
+                                *curr_max_key = new_max_key;
+                                *confirmed = false;
+                                *last_start_time = now_millis();
+                            } else {
+                                // todo: avoid removing if the sync was from existing actual node to a new one
+                                if let Some(leader_id) = state.elected_leader_id.as_ref() {
+                                    output.push(WorkerProtocol::RemovePartitionFromReplica {
+                                        id: leader_id.clone(),
+                                        replica_id: me.id.clone(),
+                                        partition_id: partition_id.clone(),
+                                    });
+                                }
+                            }
                         } else if now_millis() - *last_start_time >= SYNC_TIMEOUT_MS {
-                            let new_max_key = sync_batch(output, runtime_store, recipient_id, &partition_id, prev_max_key.as_ref());
-                            *curr_max_key = new_max_key;
-                            *confirmed = false;
-                            *last_start_time = now_millis();
+                            if let Some(new_max_key) = sync_batch(
+                                output,
+                                runtime_store,
+                                recipient_id,
+                                &partition_id,
+                                prev_max_key.as_ref(),
+                            ) {
+                                *curr_max_key = new_max_key;
+                                *confirmed = false;
+                                *last_start_time = now_millis();
+                            }
                         }
                     } else {
-                        let new_max_key = sync_batch(output, runtime_store, recipient_id, &partition_id, None);
-                        recipient_id_to_last_state.insert(recipient_id.clone(), SyncState {
-                            prev_max_key: None,
-                            curr_max_key: new_max_key,
-                            confirmed: false,
-                            last_start_time: now_millis(),
-                        });
+                        if let Some(new_max_key) =
+                            sync_batch(output, runtime_store, recipient_id, &partition_id, None)
+                        {
+                            recipient_id_to_last_state.insert(
+                                recipient_id.clone(),
+                                SyncState {
+                                    prev_max_key: None,
+                                    curr_max_key: new_max_key,
+                                    confirmed: false,
+                                    last_start_time: now_millis(),
+                                },
+                            );
+                        }
                     }
                 }
+                // todo: somehow, if the sync was from existing actual node to a new one,
+                // it has to be memorized to avoid syncing again
+                recipient_id_to_last_state.retain(|_, state| !state.confirmed);
             } else {
                 for recipient_id in recipient_ids {
-                    let new_max_key = sync_batch(output, runtime_store, recipient_id, &partition_id, None);
-                    let recipient_id_to_last_state = state.sync.entry(partition_id.clone()).or_default();
-                    recipient_id_to_last_state.insert(recipient_id.clone(), SyncState {
-                        prev_max_key: None,
-                        curr_max_key: new_max_key,
-                        confirmed: false,
-                        last_start_time: now_millis(),
-                    });
+                    if let Some(new_max_key) =
+                        sync_batch(output, runtime_store, recipient_id, &partition_id, None)
+                    {
+                        let recipient_id_to_last_state =
+                            state.sync.entry(partition_id.clone()).or_default();
+                        recipient_id_to_last_state.insert(
+                            recipient_id.clone(),
+                            SyncState {
+                                prev_max_key: None,
+                                curr_max_key: new_max_key,
+                                confirmed: false,
+                                last_start_time: now_millis(),
+                            },
+                        );
+                    }
                 }
             }
         }
     }
+    state.sync.retain(|_, state| !state.is_empty())
 }
 
 fn sync_batch(
@@ -103,7 +143,8 @@ fn sync_batch(
     recipient: &NodeId,
     partition: &PartitionId,
     after_key: Option<&Key>,
-) -> Key { // todo: Option<Key>
+) -> Option<Key> {
+    // todo: Option<Key>
     todo!("sync batch")
 }
 
