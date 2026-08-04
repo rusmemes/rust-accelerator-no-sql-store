@@ -144,7 +144,6 @@ fn sync_batch(
     partition: &PartitionId,
     after_key: Option<&Key>,
 ) -> Option<Key> {
-    // todo: Option<Key>
     todo!("sync batch")
 }
 
