@@ -2,7 +2,7 @@ use crate::common::{Me, Node, NodeId, PARTITIONS_AMOUNT, PartitionId, Partitions
 use crate::worker::domain::{SyncBatchRequest, WorkerProtocol};
 use crate::worker::runtime_store;
 use crate::worker::runtime_store::{Key, RuntimeStore};
-use crate::worker::service::state::State;
+use crate::worker::service::state::{State, SyncState};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
@@ -13,9 +13,14 @@ pub fn handle_sync_batch_response(
 ) {
     for (partition_id, max_applied_record_key) in partition_id_to_max_applied_key {
         if let Some(node_id_to_state) = state.sync.get_mut(&partition_id) {
-            if let Some((key, confirmation_flag, _)) = node_id_to_state.get_mut(&sender_id) {
-                if *key == max_applied_record_key {
-                    *confirmation_flag = true;
+            if let Some(SyncState {
+                curr_max_key,
+                confirmed,
+                ..
+            }) = node_id_to_state.get_mut(&sender_id)
+            {
+                if *curr_max_key == max_applied_record_key {
+                    *confirmed = true;
                 }
             }
         }
@@ -31,7 +36,7 @@ pub fn sync_partitions(
     for partition_id in 0..PARTITIONS_AMOUNT {
         let partition_id = PartitionId(partition_id as u16);
         if !runtime_store
-            .get_partition_records(partition_id, 1, None)
+            .get_partition_records(&partition_id, 1, None)
             .is_empty()
         {
             let recipient_ids: HashSet<&NodeId> =
@@ -46,24 +51,60 @@ pub fn sync_partitions(
                 for recipient_id in recipient_ids {
                     if !state.nodes.contains_key(recipient_id) {
                         recipient_id_to_last_state.remove(recipient_id);
-                    } else if let Some((prev_max_key, confirmed, start_time)) =
-                        recipient_id_to_last_state.get_mut(recipient_id)
+                    } else if let Some(SyncState {
+                        prev_max_key,
+                        curr_max_key,
+                        confirmed,
+                        last_start_time,
+                    }) = recipient_id_to_last_state.get_mut(recipient_id)
                     {
                         const SYNC_TIMEOUT_MS: u64 = 60000;
                         if *confirmed {
-                            todo!("send next batch")
-                        } else if now_millis() - *start_time >= SYNC_TIMEOUT_MS {
-                            todo!("restart the batch")
+                            let new_max_key = sync_batch(output, runtime_store, recipient_id, &partition_id, Some(curr_max_key));
+                            *prev_max_key = Some(*curr_max_key);
+                            *curr_max_key = new_max_key;
+                            *confirmed = false;
+                            *last_start_time = now_millis();
+                        } else if now_millis() - *last_start_time >= SYNC_TIMEOUT_MS {
+                            let new_max_key = sync_batch(output, runtime_store, recipient_id, &partition_id, prev_max_key.as_ref());
+                            *curr_max_key = new_max_key;
+                            *confirmed = false;
+                            *last_start_time = now_millis();
                         }
                     } else {
-                        todo!("send first batch for the recipient")
+                        let new_max_key = sync_batch(output, runtime_store, recipient_id, &partition_id, None);
+                        recipient_id_to_last_state.insert(recipient_id.clone(), SyncState {
+                            prev_max_key: None,
+                            curr_max_key: new_max_key,
+                            confirmed: false,
+                            last_start_time: now_millis(),
+                        });
                     }
                 }
             } else {
-                todo!("send first batches to all recipients")
+                for recipient_id in recipient_ids {
+                    let new_max_key = sync_batch(output, runtime_store, recipient_id, &partition_id, None);
+                    let recipient_id_to_last_state = state.sync.entry(partition_id.clone()).or_default();
+                    recipient_id_to_last_state.insert(recipient_id.clone(), SyncState {
+                        prev_max_key: None,
+                        curr_max_key: new_max_key,
+                        confirmed: false,
+                        last_start_time: now_millis(),
+                    });
+                }
             }
         }
     }
+}
+
+fn sync_batch(
+    output: &mut Vec<WorkerProtocol>,
+    runtime_store: &RuntimeStore,
+    recipient: &NodeId,
+    partition: &PartitionId,
+    after_key: Option<&Key>,
+) -> Key {
+    todo!("sync batch")
 }
 
 fn get_node_ids_curr_node_has_to_sync_the_partition_to<'a>(
