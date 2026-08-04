@@ -1,10 +1,11 @@
 use crate::common::{Me, Node, NodeId, PARTITIONS_AMOUNT, PartitionId, Partitions, now_millis};
 use crate::worker::domain::{SyncBatchRequest, WorkerProtocol};
-use crate::worker::runtime_store;
 use crate::worker::runtime_store::{Key, RuntimeStore};
 use crate::worker::service::state::{State, SyncState};
+use crate::worker::{domain, runtime_store};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 pub fn handle_sync_batch_response(
     state: &mut State,
@@ -66,6 +67,7 @@ pub fn sync_partitions(
                                 recipient_id,
                                 &partition_id,
                                 Some(curr_max_key),
+                                me,
                             ) {
                                 *prev_max_key = Some(*curr_max_key);
                                 *curr_max_key = new_max_key;
@@ -88,6 +90,7 @@ pub fn sync_partitions(
                                 recipient_id,
                                 &partition_id,
                                 prev_max_key.as_ref(),
+                                me,
                             ) {
                                 *curr_max_key = new_max_key;
                                 *confirmed = false;
@@ -96,7 +99,7 @@ pub fn sync_partitions(
                         }
                     } else {
                         if let Some(new_max_key) =
-                            sync_batch(output, runtime_store, recipient_id, &partition_id, None)
+                            sync_batch(output, runtime_store, recipient_id, &partition_id, None, me)
                         {
                             recipient_id_to_last_state.insert(
                                 recipient_id.clone(),
@@ -116,7 +119,7 @@ pub fn sync_partitions(
             } else {
                 for recipient_id in recipient_ids {
                     if let Some(new_max_key) =
-                        sync_batch(output, runtime_store, recipient_id, &partition_id, None)
+                        sync_batch(output, runtime_store, recipient_id, &partition_id, None, me)
                     {
                         let recipient_id_to_last_state =
                             state.sync.entry(partition_id.clone()).or_default();
@@ -143,8 +146,31 @@ fn sync_batch(
     recipient: &NodeId,
     partition: &PartitionId,
     after_key: Option<&Key>,
+    me: &Me,
 ) -> Option<Key> {
-    todo!("sync batch")
+    const SYNC_BATCH_SIZE: usize = 1000;
+    let vec = runtime_store.get_partition_records(partition, SYNC_BATCH_SIZE, after_key);
+    if vec.is_empty() {
+        None
+    } else {
+        let max_last_key = vec.last().map(|(key, _)| key.clone());
+        output.push(WorkerProtocol::SyncBatch {
+            recipient_id: recipient.clone(),
+            request: Arc::new(SyncBatchRequest {
+                sender_id: me.id.clone(),
+                records: vec
+                    .into_iter()
+                    .map(|(k, r)| domain::Record {
+                        key: k.clone(),
+                        value: r.value.clone(),
+                        ttl: r.expiration_time_ms,
+                        creation_time_ms: r.creation_time_ms,
+                    })
+                    .collect(),
+            }),
+        });
+        max_last_key
+    }
 }
 
 fn get_node_ids_curr_node_has_to_sync_the_partition_to<'a>(
