@@ -8,5 +8,5 @@ pub struct State {
     pub elected_leader_id: Option<NodeId>,
     pub nodes: HashMap<NodeId, Node>,
     pub partitions: Partitions,
-    pub sync: HashMap<PartitionId, HashMap<NodeId, (Key, bool)>>
+    pub sync: HashMap<PartitionId, HashMap<NodeId, (Key, bool, u64)>>
 }

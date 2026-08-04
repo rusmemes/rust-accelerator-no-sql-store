@@ -33,32 +33,30 @@ impl Key {
 }
 
 impl RuntimeStore {
-    pub fn remove_from_partition(&self, partition: PartitionId, keys: &[Key]) {
-        if let dashmap::mapref::entry::Entry::Occupied(mut occupied) = self.cache.entry(partition) {
-            let key_to_record = occupied.get_mut();
-            for key in keys {
-                key_to_record.remove(key);
-            }
-            if key_to_record.is_empty() {
-                occupied.remove();
-            }
-        }
-    }
-
     pub fn get_partition_records(
         &self,
         partition: PartitionId,
         amount: usize,
+        after_key: Option<Key>,
     ) -> Vec<(Key, Arc<Record>)> {
-        if let Some(entry) = self.cache.get(&partition) {
-            return entry
-                .value()
-                .iter()
-                .take(amount)
-                .map(|entry| (*entry.key(), entry.value().clone()))
-                .collect();
+        match self.cache.get(&partition) {
+            Some(entry) => match after_key {
+                Some(after_key) => entry
+                    .value()
+                    .iter()
+                    .skip_while(|entry| entry.key() <= &after_key)
+                    .take(amount)
+                    .map(|entry| (*entry.key(), entry.value().clone()))
+                    .collect(),
+                None => entry
+                    .value()
+                    .iter()
+                    .take(amount)
+                    .map(|entry| (*entry.key(), entry.value().clone()))
+                    .collect(),
+            },
+            None => vec![],
         }
-        vec![]
     }
 
     pub fn remove_partition_if_empty(&self, partition: PartitionId) {
@@ -249,42 +247,6 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_from_partition() {
-        let store = RuntimeStore::new();
-        let key1 = Key(1);
-        let key2 = Key((PARTITIONS_AMOUNT + 1) as u64); // Тот же раздел, что и key1
-        let partition = key1.partition();
-
-        store.put(
-            key1,
-            Record {
-                value: vec![1],
-                expiration_time_ms: 0,
-                creation_time_ms: 0,
-            },
-        );
-        store.put(
-            key2,
-            Record {
-                value: vec![2],
-                expiration_time_ms: 0,
-                creation_time_ms: 0,
-            },
-        );
-
-        assert!(store.cache.contains_key(&partition));
-
-        store.remove_from_partition(partition, &[key1]);
-        assert!(store.get(key1).is_none());
-        assert!(store.get(key2).is_some());
-        assert!(store.cache.contains_key(&partition));
-
-        store.remove_from_partition(partition, &[key2]);
-        assert!(store.get(key2).is_none());
-        assert!(!store.cache.contains_key(&partition));
-    }
-
-    #[test]
     fn test_get_partition_records() {
         let store = RuntimeStore::new();
         let key1 = Key(1);
@@ -308,13 +270,13 @@ mod tests {
             },
         );
 
-        let records = store.get_partition_records(partition, 10);
+        let records = store.get_partition_records(partition, 10, None);
         assert_eq!(records.len(), 2);
         let keys: HashSet<Key> = records.iter().map(|(k, _)| *k).collect();
         assert!(keys.contains(&key1));
         assert!(keys.contains(&key2));
 
-        let records_limited = store.get_partition_records(partition, 1);
+        let records_limited = store.get_partition_records(partition, 1, None);
         assert_eq!(records_limited.len(), 1);
     }
 
@@ -367,7 +329,9 @@ mod tests {
 
         let mut total_count = 0;
         for i in 0..PARTITIONS_AMOUNT {
-            total_count += store.get_partition_records(PartitionId(i as u16), 10000).len();
+            total_count += store
+                .get_partition_records(PartitionId(i as u16), 10000, None)
+                .len();
         }
         assert_eq!(total_count, 50000);
     }
