@@ -35,16 +35,16 @@ impl Key {
 impl RuntimeStore {
     pub fn get_partition_records(
         &self,
-        partition: PartitionId,
+        partition: &PartitionId,
         amount: usize,
-        after_key: Option<Key>,
+        after_key: Option<&Key>,
     ) -> Vec<(Key, Arc<Record>)> {
-        match self.cache.get(&partition) {
+        match self.cache.get(partition) {
             Some(entry) => match after_key {
                 Some(after_key) => entry
                     .value()
                     .iter()
-                    .skip_while(|entry| entry.key() <= &after_key)
+                    .skip_while(|entry| entry.key() <= after_key)
                     .take(amount)
                     .map(|entry| (*entry.key(), entry.value().clone()))
                     .collect(),
@@ -270,13 +270,13 @@ mod tests {
             },
         );
 
-        let records = store.get_partition_records(partition, 10, None);
+        let records = store.get_partition_records(&partition, 10, None);
         assert_eq!(records.len(), 2);
         let keys: HashSet<Key> = records.iter().map(|(k, _)| *k).collect();
         assert!(keys.contains(&key1));
         assert!(keys.contains(&key2));
 
-        let records_limited = store.get_partition_records(partition, 1, None);
+        let records_limited = store.get_partition_records(&partition, 1, None);
         assert_eq!(records_limited.len(), 1);
     }
 
@@ -330,7 +330,7 @@ mod tests {
         let mut total_count = 0;
         for i in 0..PARTITIONS_AMOUNT {
             total_count += store
-                .get_partition_records(PartitionId(i as u16), 10000, None)
+                .get_partition_records(&PartitionId(i as u16), 10000, None)
                 .len();
         }
         assert_eq!(total_count, 50000);
